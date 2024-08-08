@@ -383,14 +383,12 @@ static _Bool sb_test_cavp_signatures(sb_sw_curve_id_t curve, const char* name)
 
         SB_TEST_ASSERT_EQUAL(signature, signature_out);
 
-        SB_TEST_ASSERT_SUCCESS(sb_sw_verify_signature(&ct,
+        SB_TEST_ASSERT_VERIFY_SUCCESS(sb_sw_verify_signature(&ct,
                                                       &signature,
                                                       &pub_key_a,
                                                       &digest,
                                                       NULL,
-                                                      curve,
-                                                      SB_DATA_ENDIAN_BIG));
-
+                                                      curve));
     }
 
     sb_test_progress(count, 1);
@@ -593,6 +591,7 @@ _Bool sb_test_cavp_hmac_sha256(void)
     return sb_test_cavp_hmac("[L=32]");
 }
 
+#if SB_SW_P256_SUPPORT
 _Bool sb_test_cavp_signatures_p256_sha1(void)
 {
     return sb_test_cavp_signatures(SB_SW_CURVE_P256, "[P-256,SHA-1]");
@@ -622,5 +621,6 @@ _Bool sb_test_cavp_ecdh_shared_secret_p256(void)
 {
     return sb_test_cavp_ecdh_shared_secret(SB_SW_CURVE_P256, "[P-256]");
 }
+#endif
 
 #endif

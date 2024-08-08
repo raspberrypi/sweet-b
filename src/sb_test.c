@@ -44,9 +44,18 @@
 #include <unistd.h>
 #include <inttypes.h>
 #include <string.h>
-
+#if PICO_BUILD
+#include "pico/stdlib.h"
+#endif
 #ifdef SB_TEST
 
+#if BOOTROM_HARDENING
+hx_bool sonly_varm_make_hx_bool_impl(bool a, bool b) {
+    SB_ASSERT(a == b, "expected a == b");
+    hx_bool rc = { a ? HX_BIT_PATTERN_TRUE : HX_BIT_PATTERN_FALSE };
+    return rc;
+}
+#endif
 _Bool sb_test_assert_failed(const char* const file, const char* const line,
                             const char* const expression)
 {
@@ -63,13 +72,18 @@ static int usage(const char* procname)
     return 1;
 }
 
-#ifdef SB_TEST_TIS
+#if defined(SB_TEST_TIS) || PICO_BUILD
 int main(void)
 #else
 int main(const int argc, char** const argv)
 #endif
 {
-    int option;
+#if PICO_BUILD
+    int argc = 1;
+    char *argv[] = { "sb_test" };
+    stdio_init_all();
+#endif
+
     uintmax_t test_iter = SB_TEST_ITER_DEFAULT;
     _Bool test_iter_supplied = 0;
     const char* test_iter_match = NULL;
@@ -78,6 +92,10 @@ int main(const int argc, char** const argv)
 #define fflush(v) do { } while (0)
 #else
     const char* prog = argv[0];
+#if PICO_BUILD
+    optind = argc;
+#else
+   int option;
     while ((option = getopt(argc, argv, "t:c:")) >= 0) {
         switch (option) {
             case 't': {
@@ -99,6 +117,7 @@ int main(const int argc, char** const argv)
             }
         }
     }
+#endif
 
     if (optind != argc) {
         return usage(prog);
@@ -130,6 +149,11 @@ int main(const int argc, char** const argv)
 } while (0)
 
         printf("Running tests:\n");
+#if BOOTROM_HARDENING
+        printf("  hardening on\n");
+#else
+        printf("  hardening off\n");
+#endif
 #include "sb_test_list.h"
 #undef SB_DEFINE_TEST
 

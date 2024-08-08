@@ -56,6 +56,14 @@
 #define SB_WORD_SIZE SB_MUL_SIZE
 #endif
 
+#if defined(SB_OVERRIDE_MEMSET)
+#define memset SB_OVERRIDE_MEMSET
+#endif
+
+#if defined(SB_OVERRIDE_MEMCPY)
+#define memcpy SB_OVERRIDE_MEMCPY
+#endif
+
 #if !defined(SB_WORD_SIZE)
 /** @brief SB_WORD_SIZE controls the width of primitive arithmetic operands
  * used in Sweet B, such as addition, subtraction, and multiplication. It is
@@ -88,15 +96,21 @@ typedef uint8_t sb_byte_t;
  */
 typedef struct sb_single_t {
     /** An array 32 bytes making up the 256-bit value. */
-    sb_byte_t bytes[SB_ELEM_BYTES];
+    union {
+        sb_byte_t bytes[SB_ELEM_BYTES];
+        uint32_t words[SB_ELEM_BYTES/4];
+    };
 } sb_single_t; /**< Convenience typedef */
 
 /** @struct sb_double_t
  *  @brief Two 256-bit values in one wrapper.
  */
 typedef struct sb_double_t {
-    /** An array of 64 bytes making up two 256-bit values. */
-    sb_byte_t bytes[SB_ELEM_BYTES * 2];
+    union {
+        /** An array of 64 bytes making up two 256-bit values. */
+        sb_byte_t bytes[SB_ELEM_BYTES * 2];
+        uint32_t words[SB_ELEM_BYTES / 2];
+    };
 } sb_double_t; /**< Convenience typedef */
 
 /** @enum sb_data_endian_value_t
@@ -121,7 +135,19 @@ typedef uint32_t sb_data_endian_t;
  * value will be ::SB_ERROR_INSUFFICIENT_ENTROPY | ::SB_ERROR_INPUT_TOO_LARGE.
 */
 
+#if BOOTROM_HARDENING
+#include "hardening.h"
+typedef hx_bool sb_bool_t;
+typedef hx_xbool sb_verify_result_t;
 typedef uint32_t sb_error_t;
+typedef hx_bool sb_hard_error_t;
+#else
+typedef uint32_t sb_bool_t;
+typedef uint32_t sb_verify_result_t;
+typedef uint32_t sb_error_t;
+typedef uint32_t sb_hard_error_t;
+#endif
+// this should be unused in BOOTROM_BUILDS
 
 // TODO: is it worth making sb_error_t a uint64_t?
 

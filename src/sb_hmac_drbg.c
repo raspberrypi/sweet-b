@@ -50,6 +50,7 @@
 // For use in HMAC-DRBG only; assumes the current key is SB_SHA256_SIZE bytes.
 extern void sb_hmac_sha256_finish_to_key(sb_hmac_sha256_state_t hmac[static 1]);
 
+#if !BOOTROM_BUILD
 // K = HMAC(K, V || r || provided_data)
 // V = HMAC(K, V)
 static void sb_hmac_drbg_update_step
@@ -85,6 +86,7 @@ static void sb_hmac_drbg_update_vec
     }
 }
 
+#if !BOOTROM_BUILD
 sb_error_t sb_hmac_drbg_reseed(sb_hmac_drbg_state_t
                                drbg[static const restrict 1],
                                const sb_byte_t* const entropy,
@@ -119,7 +121,9 @@ sb_error_t sb_hmac_drbg_reseed(sb_hmac_drbg_state_t
     drbg->reseed_counter = 1;
     return SB_SUCCESS;
 }
+#endif
 
+#if !BOOTROM_BUILD
 sb_error_t sb_hmac_drbg_reseed_required(sb_hmac_drbg_state_t const
                                         drbg[static const 1],
                                         const size_t count)
@@ -138,7 +142,9 @@ sb_error_t sb_hmac_drbg_reseed_required(sb_hmac_drbg_state_t const
 
     return err;
 }
+#endif
 
+#if !BOOTROM_BUILD
 sb_error_t sb_hmac_drbg_init(sb_hmac_drbg_state_t drbg[static const restrict 1],
                              const sb_byte_t* const entropy,
                              size_t const entropy_len,
@@ -185,6 +191,7 @@ sb_error_t sb_hmac_drbg_init(sb_hmac_drbg_state_t drbg[static const restrict 1],
 
     return SB_SUCCESS;
 }
+#endif
 
 static sb_error_t sb_hmac_drbg_generate_additional_vec_opt
     (sb_hmac_drbg_state_t drbg[static const restrict 1],
@@ -305,6 +312,7 @@ sb_error_t sb_hmac_drbg_generate_additional_dummy(sb_hmac_drbg_state_t
     return sb_hmac_drbg_generate_additional_vec_opt
         (drbg, output, output_len, additional, additional_len, 1);
 }
+#endif
 
 #ifdef SB_TEST
 

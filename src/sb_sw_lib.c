@@ -39,6 +39,9 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <stddef.h>
+#include <string.h>
+
 #include "sb_test.h"
 #include "sb_fe.h"
 #include "sb_sw_lib.h"
@@ -48,8 +51,12 @@
 #include "sb_error.h"
 #include "sb_test_cavp.h"
 
-#include <stddef.h>
-#include <string.h>
+
+#if BOOTROM_BUILD
+#include "bootram.h"
+#elif FEATURE_CANARIES
+#include "bootrom.h"
+#endif
 
 // Used for point addition and conjugate addition
 #define C_X1(ct) (&(ct)->param_use.curve_arith.p[0].x)
@@ -97,7 +104,357 @@
 #define VERIFY_QS(ct) (&(ct)->param_use.verify.early.qs)
 #define VERIFY_QR(ct) (&(ct)->param_use.verify.common.qr)
 
+// Offsets of various point buffers in context
+
+#include <assert.h>
+#if SB_FE_ASM
+#define O_C_X1 2
+static_assert(O_C_X1*32==offsetof(sb_sw_context_t,          param_use.curve_arith.p[0].x), "");
+#define O_C_Y1 3
+static_assert(O_C_Y1*32==offsetof(sb_sw_context_t,          param_use.curve_arith.p[0].y), "");
+#define O_C_X2 4
+static_assert(O_C_X2*32==offsetof(sb_sw_context_t,          param_use.curve_arith.p[1].x), "");
+#define O_C_Y2 5
+static_assert(O_C_Y2*32==offsetof(sb_sw_context_t,          param_use.curve_arith.p[1].y), "");
+#define O_C_T5 8
+static_assert(O_C_T5*32==offsetof(sb_sw_context_t,          param_use.curve_temporaries.t[0]), "");
+#define O_C_T6 9
+static_assert(O_C_T6*32==offsetof(sb_sw_context_t,          param_use.curve_temporaries.t[1]), "");
+#define O_C_T7 10
+static_assert(O_C_T7*32==offsetof(sb_sw_context_t,          param_use.curve_temporaries.t[2]), "");
+#define O_C_T8 11
+static_assert(O_C_T8*32==offsetof(sb_sw_context_t,          param_use.curve_temporaries.t[3]), "");
+#define O_MULT_K 0
+static_assert(O_MULT_K*32==offsetof(sb_sw_context_t,        params.k), "");
+#define O_MULT_Z 1
+static_assert(O_MULT_Z*32==offsetof(sb_sw_context_t,        params.z), "");
+#define O_MULT_Z2 2
+static_assert(O_MULT_Z2*32==offsetof(sb_sw_context_t,       param_gen.z2));
+#define O_MULT_POINT 6
+static_assert(O_MULT_POINT*32==offsetof(sb_sw_context_t,    param_use.mult.point));
+#define O_MULT_POINT_X 6
+static_assert(O_MULT_POINT_X*32==offsetof(sb_sw_context_t,  param_use.mult.point.x));
+#define O_MULT_POINT_Y 7
+static_assert(O_MULT_POINT_Y*32==offsetof(sb_sw_context_t,  param_use.mult.point.y));
+#define O_SIGN_MESSAGE 12
+static_assert(O_SIGN_MESSAGE*32==offsetof(sb_sw_context_t,  param_use.sign.message));
+#define O_SIGN_PRIVATE 13
+static_assert(O_SIGN_PRIVATE*32==offsetof(sb_sw_context_t,  param_use.sign.priv));
+#define O_MULT_ADD_KG 13
+static_assert(O_MULT_ADD_KG*32==offsetof(sb_sw_context_t,   param_use.verify.late.kg));
+#define O_MULT_ADD_PG 14
+static_assert(O_MULT_ADD_PG*32==offsetof(sb_sw_context_t,   param_use.verify.late.pg));
+#define O_MULT_ADD_PG_X 14
+static_assert(O_MULT_ADD_PG_X*32==offsetof(sb_sw_context_t,   param_use.verify.late.pg.x));
+#define O_MULT_ADD_PG_Y 15
+static_assert(O_MULT_ADD_PG_Y*32==offsetof(sb_sw_context_t,   param_use.verify.late.pg.y));
+#define O_VERIFY_MESSAGE 13
+static_assert(O_VERIFY_MESSAGE*32==offsetof(sb_sw_context_t,param_use.verify.early.message));
+#define O_VERIFY_QS 14
+static_assert(O_VERIFY_QS*32==offsetof(sb_sw_context_t,     param_use.verify.early.qs));
+#define O_VERIFY_QR 12
+static_assert(O_VERIFY_QR*32==offsetof(sb_sw_context_t,     param_use.verify.common.qr));
+
+#define O_CURVE_G_R_X 2
+static_assert(O_CURVE_G_R_X*4==offsetof(sb_sw_curve_t,g_r.x));
+#define O_CURVE_G_R_Y 10
+static_assert(O_CURVE_G_R_Y*4==offsetof(sb_sw_curve_t,g_r.y));
+#define O_CURVE_H_R_X 18
+static_assert(O_CURVE_H_R_X*4==offsetof(sb_sw_curve_t,h_r.x));
+#define O_CURVE_H_R_Y 26
+static_assert(O_CURVE_H_R_Y*4==offsetof(sb_sw_curve_t,h_r.y));
+#define O_CURVE_G_H_R_X 34
+static_assert(O_CURVE_G_H_R_X*4==offsetof(sb_sw_curve_t,g_h_r.x));
+#define O_CURVE_G_H_R_Y 42
+static_assert(O_CURVE_G_H_R_Y*4==offsetof(sb_sw_curve_t,g_h_r.y));
+
+#if SB_SW_P256_SUPPORT
+#define O_CURVE_MINUS_A 50
+static_assert(O_CURVE_MINUS_A*4==offsetof(sb_sw_curve_t,minus_a));
+#define O_CURVE_B 59
+static_assert(O_CURVE_B*4==offsetof(sb_sw_curve_t,b));
+#endif
+
+static_assert(offsetof(sb_sw_curve_t,p)==0); // FE interpreter and other assembler relies on these also
+static_assert(offsetof(sb_sw_curve_t,n)==4);
+static_assert(offsetof(sb_prime_field_t,p_minus_two_f1)==36);
+static_assert(offsetof(sb_prime_field_t,p_minus_two_f2)==68);
+static_assert(offsetof(sb_prime_field_t,r2_mod_p)==100);
+static_assert(offsetof(sb_prime_field_t,r_mod_p)==132);
+static_assert(offsetof(sb_prime_field_padded_t,p_minus_two_f1)==36);
+static_assert(offsetof(sb_prime_field_padded_t,p_minus_two_f2)==68);
+static_assert(offsetof(sb_prime_field_padded_t,r2_mod_p)==100);
+static_assert(offsetof(sb_prime_field_padded_t,r_mod_p)==132);
+static_assert(offsetof(sb_prime_field_padded_t,r_mod_p)==132);
+static_assert(offsetof(sb_prime_field_padded_t,pad0)==164);
+
+extern void sb_fe_mov(void*dest,const void*src);
+extern void sb_fe_mov_pair(void*dest,const void*src);
+#ifdef SB_SW_UNIQUE_CURVE_SUPPORTED
+#define SB_FE_START(C) { register uintptr_t _c asm ("r0") = (uintptr_t)C; asm volatile( "bl sb_fe_interp\n"
+#define SB_FE_STOP ".short 0xffff\n" \
+                   : "+l" (_c) \
+                   : \
+                   : "r2", "r3", "ip", "lr"); }
+#else
+#define SB_FE_START(C,F) { register uintptr_t _c asm ("r0") = (uintptr_t)C; register uintptr_t _f asm ("r1") = (uintptr_t)F; asm volatile( "bl sb_fe_interp\n"
+#define SB_FE_STOP ".short 0xffff\n" \
+                   : "+l" (_c), "+l" (_f) \
+                   : \
+                   : "r2", "r3", "ip", "lr"); }
+#endif
+#define XSTR(s) STR(s)
+#define STR(s) #s
+#define SB_FE_MOD_ADD(D,N,M,PN)    ".short 0x0000+(" XSTR(PN) "<<12)+(" XSTR(M) "<<8)+(" XSTR(N) "<<4)+" XSTR(D) "\n"
+#define SB_FE_MOD_DOUBLE(D,N,PN)   ".short 0x0000+(" XSTR(PN) "<<12)+(" XSTR(N) "<<8)+(" XSTR(N) "<<4)+" XSTR(D) "\n"
+#define SB_FE_MOD_SUB(D,N,M,PN)    ".short 0x2000+(" XSTR(PN) "<<12)+(" XSTR(M) "<<8)+(" XSTR(N) "<<4)+" XSTR(D) "\n"
+#define SB_FE_MONT_MULT(D,N,M,PN)  ".short 0x4000+(" XSTR(PN) "<<12)+(" XSTR(M) "<<8)+(" XSTR(N) "<<4)+" XSTR(D) "\n"
+#define SB_FE_MONT_SQUARE(D,N,PN)  ".short 0x4000+(" XSTR(PN) "<<12)+(" XSTR(N) "<<8)+(" XSTR(N) "<<4)+" XSTR(D) "\n"
+#define SB_FE_MOV(D,N)             ".short 0x6000+("                                     XSTR(N) "<<4)+" XSTR(D) "\n"
+#define SB_FE_MOD_REDUCE(D,PN)     ".short 0x8000+(" XSTR(PN) "<<12)+"                                   XSTR(D) "\n"
+#define SB_FE_MONT_CONVERT(D,N,PN) ".short 0xa000+(" XSTR(PN) "<<12)+("                  XSTR(N) "<<4)+" XSTR(D) "\n"
+#define SB_FE_MOD_INV_R(D,N,M,PN)  ".short 0xc000+(" XSTR(PN) "<<12)+(" XSTR(M) "<<8)+(" XSTR(N) "<<4)+" XSTR(D) "\n"
+#define SB_FE_MOV_SREL(D,I)        ".short 0xe000+("                                     XSTR(I) "<<4)+" XSTR(D) "\n"
+#define SB_FE_MOV_CONST(D,I)       ".short 0xe800+("                                     XSTR(I) "<<4)+" XSTR(D) "\n"
+#else
+#define O_C_X1 C_X1(_c)
+#define O_C_X2 C_X2(_c)
+#define O_C_Y1 C_Y1(_c)
+#define O_C_Y2 C_Y2(_c)
+#define O_C_T5 C_T5(_c)
+#define O_C_T6 C_T6(_c)
+#define O_C_T7 C_T7(_c)
+#define O_C_T8 C_T8(_c)
+#define O_MULT_K MULT_K(_c)
+#define O_MULT_Z MULT_Z(_c)
+#define O_MULT_Z2 MULT_Z2(_c)
+#define O_MULT_POINT_X MULT_POINT_X(_c)
+#define O_MULT_POINT_Y MULT_POINT_Y(_c)
+#define O_SIGN_MESSAGE SIGN_MESSAGE(_c)
+#define O_MULT_ADD_KG MULT_ADD_KG(_c)
+#define O_MULT_ADD_PG_X (&MULT_ADD_PG(_c)->x)
+#define O_MULT_ADD_PG_Y (&MULT_ADD_PG(_c)->y)
+#define O_VERIFY_MESSAGE VERIFY_MESSAGE(_c)
+#define O_VERIFY_QR VERIFY_QR(_c)
+#define O_VERIFY_QS VERIFY_QS(_c)
+
+#define PN (PN ? _s->p : _s->n)
+#define SB_FE_START(C,F) { sb_sw_context_t *_c = C; const sb_sw_curve_t *_s = F; ((void)_s->p)
+#define SB_FE_MOD_ADD(D,N,M,PN) sb_fe_mod_add(D,N,M,PN?_s->p:_s->n)
+#define SB_FE_MOD_DOUBLE(D,N,PN) sb_fe_mod_double(D,N,PN?_s->p:_s->n)
+#define SB_FE_MOD_SUB(D,N,M,PN) sb_fe_mod_sub(D,N,M,PN?_s->p:_s->n)
+#define SB_FE_MONT_MULT(D,N,M,PN) sb_fe_mont_mult(D,N,M,PN?_s->p:_s->n)
+#define SB_FE_MONT_SQUARE(D,N,PN) sb_fe_mont_square(D,N,PN?_s->p:_s->n)
+#define SB_FE_MOV(D,N) *D = *N
+#define SB_FE_MONT_CONVERT(D,N,PN) sb_fe_mont_reduce(D,N,PN?_s->p:_s->n)
+#define SB_FE_MOD_REDUCE(D,PN) sb_fe_mod_reduce(D,PN?_s->p:_s->n)
+#define SB_FE_MOD_INV_R(D,N,M,PN) sb_fe_mod_inv_r(D,N,M,PN?_s->p:_s->n)
+#define SB_FE_MOV_SREL(D,I) memcpy(D,(char*)_s+(I)*4,32)
+#define SB_FE_MOV_CONST(D,I) memset(D,0,32) ; *(unsigned char*)_s=(I)
+#define SB_FE_STOP }
+#endif
+
+#if SB_SW_P256_SUPPORT
+
+// P256 is defined over F(p) where p is the Solinas prime
+// 2^256 - 2^224 + 2^192 + 2^96 - 1
+const sb_prime_field_t SB_CURVE_P256_P = {
+    .p = SB_FE_CONST_QR(0xFFFFFFFF00000001, 0x0000000000000000,
+                        0x00000000FFFFFFFF, 0xFFFFFFFFFFFFFFFF,
+                        &SB_CURVE_P256_P),
+    // p - 2 has Hamming weight 128. Factors:
+
+    // Hamming weight 100
+    .p_minus_two_f1 =
+        SB_FE_CONST_QR(0x00000000F04D3168, 0xCA47D4443B0552EC,
+                       0x999CB770B4B62944, 0x6571423119245693,
+                       &SB_CURVE_P256_P),
+
+    // Hamming weight 16
+    .p_minus_two_f2 = SB_FE_CONST_QR(0, 0, 0, 0x110B9592F,
+                                     &SB_CURVE_P256_P),
+
+    .p_mp = (sb_word_t) UINT64_C(1),
+    .r2_mod_p = SB_FE_CONST_QR(0x00000004FFFFFFFD, 0xFFFFFFFFFFFFFFFE,
+                               0xFFFFFFFBFFFFFFFF, 0x0000000000000003,
+                               &SB_CURVE_P256_P),
+    .r_mod_p = SB_FE_CONST_QR(0x00000000FFFFFFFE, 0xFFFFFFFFFFFFFFFF,
+                              0xFFFFFFFF00000000, 0x0000000000000001,
+                              &SB_CURVE_P256_P),
+};
+
+// The prime order of the P256 group
+const sb_prime_field_t SB_CURVE_P256_N = {
+    .p = SB_FE_CONST_QR(0xFFFFFFFF00000000, 0xFFFFFFFFFFFFFFFF,
+                        0xBCE6FAADA7179E84, 0xF3B9CAC2FC632551,
+                        &SB_CURVE_P256_N),
+
+    // p - 2 has Hamming weight 169. Factors:
+
+    // Hamming weight 85:
+    .p_minus_two_f1 =
+        SB_FE_CONST(0, 0x1E85574166915052,
+                    0x945E2FDE9505C722, 0x24DC681531C30637),
+
+    // Hamming weight 29:
+    .p_minus_two_f2 = SB_FE_CONST(0, 0, 0x8, 0x6340A6B209A6CDA9),
+
+    .p_mp = (sb_word_t) UINT64_C(0xCCD1C8AAEE00BC4F),
+    .r2_mod_p =
+        SB_FE_CONST_QR(0x66E12D94F3D95620, 0x2845B2392B6BEC59,
+                       0x4699799C49BD6FA6, 0x83244C95BE79EEA2,
+                       &SB_CURVE_P256_N),
+    .r_mod_p =
+        SB_FE_CONST_QR(0x00000000FFFFFFFF, 0x0000000000000000,
+                       0x4319055258E8617B, 0x0C46353D039CDAAF,
+                       &SB_CURVE_P256_N),
+};
+
+const sb_sw_curve_t SB_CURVE_P256 = {
+    .p = &SB_CURVE_P256_P,
+    .n = &SB_CURVE_P256_N,
+    .g_r = {
+        SB_FE_CONST_QR(0x18905F76A53755C6, 0x79FB732B77622510,
+                       0x75BA95FC5FEDB601, 0x79E730D418A9143C,
+                       &SB_CURVE_P256_P),
+        SB_FE_CONST_QR(0x8571FF1825885D85, 0xD2E88688DD21F325,
+                       0x8B4AB8E4BA19E45C, 0xDDF25357CE95560A, &SB_CURVE_P256_P)
+    },
+    .h_r = {
+        SB_FE_CONST_QR(0x3DABB6DD63469FDA, 0xD6636C75F0AEE963,
+                       0x5E3BDEACE03C7C1E, 0x599DE4BA95AEDB71,
+                       &SB_CURVE_P256_P),
+        SB_FE_CONST_QR(0xCA44FCA952D8F196, 0x7AC346280EA74210,
+                       0x77AE0F653969D951, 0x3EF12A374A0D7441, &SB_CURVE_P256_P)
+    },
+    .g_h_r = {
+        SB_FE_CONST_QR(0x41FBBA1A1842253C, 0x2DDFA21F8A5F4377,
+                       0x928D36DAB2C0BD2F, 0x2C487DEB40FA32F9,
+                       &SB_CURVE_P256_P),
+        SB_FE_CONST_QR(0xD041EE1CCC6223C9, 0xCD81EFC57B6F0943,
+                       0xC614355C4D10A425, 0x3A1739581FCABBB7, &SB_CURVE_P256_P)
+    },
+#if SB_SW_P256_SUPPORT
+    .minus_a = SB_FE_CONST_QR(0, 0, 0, 3, &SB_CURVE_P256_P),
+    .minus_a_r_over_three = &SB_CURVE_P256_P.r_mod_p,
+    .b = SB_FE_CONST_QR(0x5AC635D8AA3A93E7, 0xB3EBBD55769886BC,
+                        0x651D06B0CC53B0F6, 0x3BCE3C3E27D2604B,
+                        &SB_CURVE_P256_P),
+#endif
+};
+
+#endif
+
+#if SB_SW_SECP256K1_SUPPORT
+
+// secp256k1 is defined over F(p):
+const sb_prime_field_padded_t SB_CURVE_SECP256K1_P = {
+    .p = SB_FE_CONST_QR(0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF,
+                        0xFFFFFFFFFFFFFFFF, 0xFFFFFFFEFFFFFC2F,
+                        &SB_CURVE_SECP256K1_P),
+
+    // p - 2 has Hamming weight 249. Factors:
+
+    // Hamming weight 64:
+    .p_minus_two_f1 =
+        SB_FE_CONST(0, 0, 0x037F6FF774E142D5, 0xC004A68677B5D811),
+
+    // Hamming weight 58:
+    .p_minus_two_f2 = SB_FE_CONST(0, 0x49,
+                                  0x30562E37A2A6A014, 0x99B40D0074369E5D),
+
+    .p_mp = (sb_word_t) UINT64_C(0xD838091DD2253531),
+    .r2_mod_p =
+        SB_FE_CONST_QR(0x0000000000000000, 0x0000000000000000,
+                       0x0000000000000001, 0x000007A2000E90A1,
+                       &SB_CURVE_SECP256K1_P),
+    .r_mod_p =
+        SB_FE_CONST_QR(0, 0, 0, 0x1000003D1,
+                       &SB_CURVE_SECP256K1_P),
+    .pad0 = 0, // this pad ensures that the last 32 bytes of this structure are equal to SB_FE_ONE
+};
+
+/* we would like to:
+static_assert(((const uint32_t*)&SB_CURVE_SECP256K1_P)[0x22]==1);
+static_assert(((const uint32_t*)&SB_CURVE_SECP256K1_P)[0x23]==0);
+static_assert(((const uint32_t*)&SB_CURVE_SECP256K1_P)[0x24]==0);
+static_assert(((const uint32_t*)&SB_CURVE_SECP256K1_P)[0x25]==0);
+static_assert(((const uint32_t*)&SB_CURVE_SECP256K1_P)[0x26]==0);
+static_assert(((const uint32_t*)&SB_CURVE_SECP256K1_P)[0x27]==0);
+static_assert(((const uint32_t*)&SB_CURVE_SECP256K1_P)[0x28]==0);
+static_assert(((const uint32_t*)&SB_CURVE_SECP256K1_P)[0x29]==0);
+but apparently those are not constants we can static_assert.
+*/
+
+// The prime order of the secp256k1 group:
+const sb_prime_field_t SB_CURVE_SECP256K1_N = {
+    .p = SB_FE_CONST_QR(0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFE,
+                        0xBAAEDCE6AF48A03B, 0xBFD25E8CD0364141,
+                        &SB_CURVE_SECP256K1_N),
+
+    // p -2 has Hamming weight 196. Factors:
+
+    // Hamming weight 134:
+    .p_minus_two_f1 = SB_FE_CONST(0x3333333333333333, 0x3333333333333332,
+                                  0xF222F8FAEFDB533F, 0x265D461C29A47373),
+
+    // Hamming weight 2:
+    .p_minus_two_f2 = SB_FE_CONST(0, 0, 0, 5),
+
+    .p_mp = (sb_word_t) UINT64_C(0x4B0DFF665588B13F),
+    .r2_mod_p = SB_FE_CONST_QR(0x9D671CD581C69BC5, 0xE697F5E45BCD07C6,
+                               0x741496C20E7CF878, 0x896CF21467D7D140,
+                               &SB_CURVE_SECP256K1_N),
+    .r_mod_p = SB_FE_CONST_QR(0x0000000000000000, 0x0000000000000001,
+                              0x4551231950B75FC4, 0x402DA1732FC9BEBF,
+                              &SB_CURVE_SECP256K1_N),
+};
+
+const sb_sw_curve_t SB_CURVE_SECP256K1 = {
+    .p = (const sb_prime_field_t*) &SB_CURVE_SECP256K1_P,
+    .n = &SB_CURVE_SECP256K1_N,
+    .g_r = {
+        SB_FE_CONST_QR(0x9981E643E9089F48, 0x979F48C033FD129C,
+                       0x231E295329BC66DB, 0xD7362E5A487E2097,
+                       &SB_CURVE_SECP256K1_P),
+        SB_FE_CONST_QR(0xCF3F851FD4A582D6, 0x70B6B59AAC19C136,
+                       0x8DFC5D5D1F1DC64D, 0xB15EA6D2D3DBABE2,
+                       &SB_CURVE_SECP256K1_P)
+    },
+    .h_r = {
+        SB_FE_CONST_QR(0x30A198DEBBCEFCAE, 0x537053ECF418BA53,
+                       0xD8C36C4D8EC6CE34, 0xA381C3D21219CA1C,
+                       &SB_CURVE_SECP256K1_P),
+        SB_FE_CONST_QR(0xC198D9AFBD3AB7C6, 0xA5495A07C2AFCCE5,
+                       0xF671D727A3637755, 0x446A2AD0C25FF948,
+                       &SB_CURVE_SECP256K1_P)
+    },
+    .g_h_r = {
+        SB_FE_CONST_QR(0x7BCE0EF2C201767E, 0xEC431492C7C96E54,
+                       0x15EF56335DF148DB, 0xCDA8D7EF632EA0D8,
+                       &SB_CURVE_SECP256K1_P),
+        SB_FE_CONST_QR(0x3FB97A191E4DE5EA, 0xBBA21827B7EFEC04,
+                       0xC7B977CC32E0BAA9, 0xC374BB2A1315A22F,
+                       &SB_CURVE_SECP256K1_P)
+    },
+#if SB_SW_P256_SUPPORT
+    .minus_a = SB_FE_CONST_QR(0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF,
+                              0xFFFFFFFFFFFFFFFF, 0xFFFFFFFEFFFFFC2F,
+                              &SB_CURVE_SECP256K1_P),
+    .minus_a_r_over_three = &SB_CURVE_SECP256K1_P.p,
+    .b = SB_FE_CONST_QR(0, 0, 0, 7, &SB_CURVE_SECP256K1_P),
+#endif
+};
+
+#endif
+
+#if !SB_SW_P256_SUPPORT
+// static const sb_fe_t secp256k1_b=SB_FE_CONST_QR(0, 0, 0, 7, &SB_CURVE_SECP256K1_P);
+static const sb_fe_t secp256k1_b=SB_FE_CONST(0, 0, 0, 7);
+#endif
+
 // Helper to fetch a curve given its curve_id
+#if !BOOTROM_BUILD
 static sb_error_t sb_sw_curve_from_id(const sb_sw_curve_t** const s,
                                       sb_sw_curve_id_t const curve)
 {
@@ -123,6 +480,21 @@ static sb_error_t sb_sw_curve_from_id(const sb_sw_curve_t** const s,
     *s = NULL;
     return SB_ERROR_CURVE_INVALID;
 }
+#endif
+
+#if !BOOTROM_BUILD
+// Helper to fetch a curve_id given a curve
+static sb_sw_curve_id_t sb_sw_id_from_curve(const sb_sw_curve_t* const s)
+{
+#if SB_SW_P256_SUPPORT
+  if(s==&SB_CURVE_P256) return SB_SW_CURVE_P256;
+#endif
+#if SB_SW_SECP256K1_SUPPORT
+  if(s==&SB_CURVE_SECP256K1) return SB_SW_CURVE_SECP256K1;
+#endif
+  return 999;
+}
+#endif
 
 // All multiplication in Sweet B takes place using Montgomery multiplication
 // MM(x, y) = x * y * R^-1 mod M where R = 2^SB_FE_BITS
@@ -143,40 +515,43 @@ static sb_error_t sb_sw_curve_from_id(const sb_sw_curve_t** const s,
 // Input:  P = (x2, y2) in affine coordinates
 // Output: (x1, y1) = P', (x2, y2) = 2P in co-Z with t5 = Z = 2 * y2
 // Cost:   6MM + 11A
+#if !BOOTROM_BUILD
 static void sb_sw_point_initial_double(sb_sw_context_t c[static const 1],
                                        const sb_sw_curve_t s[static const 1])
 {
-    sb_fe_mod_double(C_T5(c), C_Y2(c), s->p); // t5 = Z
-    sb_fe_mont_square(C_Y1(c), C_X2(c), s->p); // t2 = x^2
-    sb_fe_mod_sub(C_Y1(c), C_Y1(c), s->minus_a_r_over_three,
-                  s->p); // t2 = x^2 + a / 3
-    sb_fe_mod_double(C_X1(c), C_Y1(c), s->p); // t1 = 2 * (x^2 + a / 3)
-    sb_fe_mod_add(C_Y1(c), C_Y1(c), C_X1(c),
-                  s->p); // t2 = (3 * x^2 + a) = B
 
-    sb_fe_mont_square(C_T6(c), C_Y2(c), s->p); // t6 = y^2
-    sb_fe_mod_double(C_Y2(c), C_T6(c), s->p); // t4 = 2 * y^2
-    sb_fe_mod_double(C_T6(c), C_Y2(c), s->p); // t6 = 4 * y^2
-    sb_fe_mont_mult(C_X1(c), C_X2(c), C_T6(c),
-                    s->p); // t1 = 4 * x * y^2 = A
+    SB_FE_START(c,s)
+    SB_FE_MOD_DOUBLE(O_C_T5,O_C_Y2,0)                 // sb_fe_mod_double(C_T5(c), C_Y2(c), s->p); // t5 = Z
+    SB_FE_MONT_SQUARE(O_C_Y1,O_C_X2,0)                // sb_fe_mont_square(C_Y1(c), C_X2(c), s->p); // t2 = x^2
+#if SB_SW_P256_SUPPORT // otherwise a is identically zero
+    SB_FE_STOP
 
-    sb_fe_mont_square(C_X2(c), C_Y1(c),
-                      s->p); // t3 = B^2
+    sb_fe_mod_sub(C_Y1(c), C_Y1(c), s->minus_a_r_over_three, s->p); // t2 = x^2 + a / 3
 
-    sb_fe_mod_sub(C_X2(c), C_X2(c), C_X1(c), s->p); // t2 = B^2 - A
-    sb_fe_mod_sub(C_X2(c), C_X2(c), C_X1(c),
-                  s->p); // x2 = B^2 - 2 * A = X2
+    SB_FE_START(c,s)
+#endif
+    SB_FE_MOD_DOUBLE(O_C_X1, O_C_Y1, 0)        // sb_fe_mod_double(C_X1(c), C_Y1(c), s->p);          // t1 = 2 * (x^2 + a / 3)
+    SB_FE_MOD_ADD(O_C_Y1, O_C_Y1, O_C_X1, 0)   // sb_fe_mod_add(C_Y1(c), C_Y1(c), C_X1(c), s->p);    // t2 = (3 * x^2 + a) = B
 
-    sb_fe_mod_sub(C_T6(c), C_X1(c), C_X2(c), s->p); // t6 = A - X2
-    sb_fe_mont_mult(C_T7(c), C_Y1(c), C_T6(c),
-                    s->p); // t7 = B * (A - X2)
+    SB_FE_MONT_SQUARE(O_C_T6, O_C_Y2, 0)       // sb_fe_mont_square(C_T6(c), C_Y2(c), s->p);         // t6 = y^2
+    SB_FE_MOD_DOUBLE(O_C_Y2, O_C_T6, 0)        // sb_fe_mod_double(C_Y2(c), C_T6(c), s->p);          // t4 = 2 * y^2
+    SB_FE_MOD_DOUBLE(O_C_T6, O_C_Y2, 0)        // sb_fe_mod_double(C_T6(c), C_Y2(c), s->p);          // t6 = 4 * y^2
+    SB_FE_MONT_MULT(O_C_X1, O_C_X2, O_C_T6, 0) // sb_fe_mont_mult(C_X1(c), C_X2(c), C_T6(c), s->p);  // t1 = 4 * x * y^2 = A
 
-    sb_fe_mont_square(C_Y1(c), C_Y2(c),
-                      s->p); // t2 = (2 * y^2)^2 = 4 * y^4
-    sb_fe_mod_double(C_Y1(c), C_Y1(c), s->p); // Y1 = 8 * y^4 = Z^3 * y
-    sb_fe_mod_sub(C_Y2(c), C_T7(c), C_Y1(c),
-                  s->p); // Y2 = B * (A - X2) - Y1
+    SB_FE_MONT_SQUARE(O_C_X2, O_C_Y1, 0)       // sb_fe_mont_square(C_X2(c), C_Y1(c), s->p);         // t3 = B^2
+
+    SB_FE_MOD_SUB(O_C_X2, O_C_X2, O_C_X1, 0)   // sb_fe_mod_sub(C_X2(c), C_X2(c), C_X1(c), s->p);    // t2 = B^2 - A
+    SB_FE_MOD_SUB(O_C_X2, O_C_X2, O_C_X1, 0)   // sb_fe_mod_sub(C_X2(c), C_X2(c), C_X1(c), s->p);    // x2 = B^2 - 2 * A = X2
+
+    SB_FE_MOD_SUB(O_C_T6, O_C_X1, O_C_X2, 0)   // sb_fe_mod_sub(C_T6(c), C_X1(c), C_X2(c), s->p);    // t6 = A - X2
+    SB_FE_MONT_MULT(O_C_T7, O_C_Y1, O_C_T6, 0) // sb_fe_mont_mult(C_T7(c), C_Y1(c), C_T6(c), s->p);  // t7 = B * (A - X2)
+
+    SB_FE_MONT_SQUARE(O_C_Y1, O_C_Y2, 0)       // sb_fe_mont_square(C_Y1(c), C_Y2(c), s->p);         // t2 = (2 * y^2)^2 = 4 * y^4
+    SB_FE_MOD_DOUBLE(O_C_Y1, O_C_Y1, 0)        // sb_fe_mod_double(C_Y1(c), C_Y1(c), s->p);          // Y1 = 8 * y^4 = Z^3 * y
+    SB_FE_MOD_SUB(O_C_Y2, O_C_T7, O_C_Y1, 0)   // sb_fe_mod_sub(C_Y2(c), C_T7(c), C_Y1(c), s->p);    // Y2 = B * (A - X2) - Y1
+    SB_FE_STOP
 }
+#endif
 
 // Co-Z point addition with update:
 // Input: P = (x1, y1), Q = (x2, y2) in co-Z, with x2 - x1 in t6
@@ -188,23 +563,21 @@ static void sb_sw_point_initial_double(sb_sw_context_t c[static const 1],
 static void sb_sw_point_co_z_add_update_zup(sb_sw_context_t c[static const 1],
                                             const sb_sw_curve_t s[static const 1])
 {
-    sb_fe_mont_square(C_T5(c), C_T6(c),
-                      s->p); // t5 = (x2 - x1)^2 = (Z' / Z)^2 = A
-    sb_fe_mont_mult(C_T6(c), C_X2(c), C_T5(c), s->p); // t6 = x2 * A = C
-    sb_fe_mont_mult(C_X2(c), C_X1(c), C_T5(c), s->p); // t3 = x1 * A = B = x1'
-    sb_fe_mod_sub(C_T7(c), C_Y2(c), C_Y1(c), s->p); // t7 = y2 - y1
-    sb_fe_mod_add(C_T5(c), C_X2(c), C_T6(c), s->p); // t5 = B + C
-    sb_fe_mod_sub(C_T6(c), C_T6(c), C_X2(c),
-                  s->p); // t6 = C - B = (x2 - x1)^3 = (Z' / Z)^3
-    sb_fe_mont_mult(C_Y2(c), C_Y1(c), C_T6(c),
-                    s->p); // y1' = y1 * (Z' / Z)^3 = E
-    sb_fe_mont_square(C_X1(c), C_T7(c), s->p); // t1 = (y2 - y1)^2 = D
-    sb_fe_mod_sub(C_X1(c), C_X1(c), C_T5(c), s->p); // x3 = D - B - C
-    sb_fe_mod_sub(C_T6(c), C_X2(c), C_X1(c), s->p); // t6 = B - x3
-    sb_fe_mont_mult(C_Y1(c), C_T7(c), C_T6(c),
-                    s->p); // t4 = (y2 - y1) * (B - x3)
-    sb_fe_mod_sub(C_Y1(c), C_Y1(c), C_Y2(c),
-                  s->p); // y3 = (y2 - y1) * (B - x3) - E
+    SB_FE_START(c,s)
+    SB_FE_MONT_SQUARE(O_C_T5, O_C_T6,         0)  //  sb_fe_mont_square(C_T5(c), C_T6(c), s->p);        // t5 = (x2 - x1)^2 = (Z' / Z)^2 = A
+    SB_FE_MONT_MULT  (O_C_T6, O_C_X2, O_C_T5, 0)  //  sb_fe_mont_mult(C_T6(c), C_X2(c), C_T5(c), s->p); // t6 = x2 * A = C
+    SB_FE_MONT_MULT  (O_C_X2, O_C_X1, O_C_T5, 0)  //  sb_fe_mont_mult(C_X2(c), C_X1(c), C_T5(c), s->p); // t3 = x1 * A = B = x1'
+    SB_FE_MOD_SUB    (O_C_T7, O_C_Y2, O_C_Y1, 0)  //  sb_fe_mod_sub(C_T7(c), C_Y2(c), C_Y1(c), s->p);   // t7 = y2 - y1
+    SB_FE_MOD_ADD    (O_C_T5, O_C_X2, O_C_T6, 0)  //  sb_fe_mod_add(C_T5(c), C_X2(c), C_T6(c), s->p);   // t5 = B + C
+    SB_FE_MOD_SUB    (O_C_T6, O_C_T6, O_C_X2, 0)  //  sb_fe_mod_sub(C_T6(c), C_T6(c), C_X2(c), s->p);   // t6 = C - B = (x2 - x1)^3 = (Z' / Z)^3
+    SB_FE_MONT_MULT  (O_C_Y2, O_C_Y1, O_C_T6, 0)  //  sb_fe_mont_mult(C_Y2(c), C_Y1(c), C_T6(c), s->p); // y1' = y1 * (Z' / Z)^3 = E
+    SB_FE_MONT_SQUARE(O_C_X1, O_C_T7,         0)  //  sb_fe_mont_square(C_X1(c), C_T7(c), s->p);        // t1 = (y2 - y1)^2 = D
+    SB_FE_MOD_SUB    (O_C_X1, O_C_X1, O_C_T5, 0)  //  sb_fe_mod_sub(C_X1(c), C_X1(c), C_T5(c), s->p);   // x3 = D - B - C
+    SB_FE_MOD_SUB    (O_C_T6, O_C_X2, O_C_X1, 0)  //  sb_fe_mod_sub(C_T6(c), C_X2(c), C_X1(c), s->p);   // t6 = B - x3
+    SB_FE_MONT_MULT  (O_C_Y1, O_C_T7, O_C_T6, 0)  //  sb_fe_mont_mult(C_Y1(c), C_T7(c), C_T6(c), s->p); // t4 = (y2 - y1) * (B - x3)
+    SB_FE_MOD_SUB    (O_C_Y1, O_C_Y1, O_C_Y2, 0)  //  sb_fe_mod_sub(C_Y1(c), C_Y1(c), C_Y2(c), s->p);   // y3 = (y2 - y1) * (B - x3) - E
+    SB_FE_STOP
+
 }
 
 // Co-Z addition with update, with Z-update computation
@@ -218,6 +591,7 @@ sb_sw_point_co_z_add_update(sb_sw_context_t c[static const 1],
     sb_sw_point_co_z_add_update_zup(c, s);
 }
 
+#if !BOOTROM_BUILD
 // Co-Z conjugate addition with update, with Z-update computation
 // Input:  P = (x1, y1), Q = (x2, y2) in co-Z, with x2 - x1 in t6
 // Output: P + Q = (x3, y3) in (x1, y1), P - Q = in (x2, y2), P' in (t6, t7)
@@ -244,6 +618,7 @@ static void sb_sw_point_co_z_conj_add(sb_sw_context_t c[static const 1],
     sb_fe_mod_sub(C_Y2(c), C_Y2(c), C_T7(c),
                   s->p); // y3' = (y2 + y1) * (x3' - B) - E
 }
+#endif
 
 // Regularize the bit count of the scalar by adding CURVE_N or 2 * CURVE_N
 // The resulting scalar will have P256_BITS + 1 bits, with the highest bit set
@@ -258,6 +633,7 @@ static void sb_sw_point_co_z_conj_add(sb_sw_context_t c[static const 1],
 // not overflow; hence a second addition is necessary. This is the largest
 // scalar which requires two additions.
 
+#if !BOOTROM_BUILD
 static void sb_sw_regularize_scalar(sb_fe_t scalar[static const 1],
                                     sb_sw_context_t c[static const 1],
                                     const sb_sw_curve_t s[static const 1])
@@ -266,7 +642,10 @@ static void sb_sw_regularize_scalar(sb_fe_t scalar[static const 1],
     sb_fe_add(scalar, C_T5(c), &s->n->p);
     sb_fe_ctswap(c_1, scalar, C_T5(c));
 }
+#endif
 
+// NOT USED
+#if !BOOTROM_BUILD
 static void
 sb_sw_point_mult_start(sb_sw_context_t m[static const 1],
                        const sb_sw_curve_t curve[static const 1])
@@ -295,7 +674,7 @@ sb_sw_point_mult_start(sb_sw_context_t m[static const 1],
     // k_one flag is used only for constant-time swaps. Because of the scalar
     // inversion above, -1 will be handled as 1 during the ladder, and P will
     // be inverted to produce -P.
-    state.k_one = sb_fe_equal(MULT_K(m), &SB_FE_ONE);
+    state.k_one = SB_FE_EQ(MULT_K(m), &SB_FE_ONE);
 
     sb_sw_regularize_scalar(MULT_K(m), m, curve);
 
@@ -332,9 +711,12 @@ sb_sw_point_mult_start(sb_sw_context_t m[static const 1],
 
     *MULT_STATE(m) = state;
 }
+#endif
 
 #define SB_SW_POINT_ITERATIONS 16
 
+// NOT USED
+#if !BOOTROM_BUILD
 static _Bool
 sb_sw_point_mult_continue(sb_sw_context_t m[static const 1],
                           const sb_sw_curve_t curve[static const 1])
@@ -604,42 +986,85 @@ sb_sw_point_mult_continue(sb_sw_context_t m[static const 1],
         }
     }
 }
+#endif
 
+// NOT USED
+#if !BOOTROM_BUILD
 // Are we there yet?
 static _Bool sb_sw_point_mult_is_finished(sb_sw_context_t m[static const 1])
 {
     return MULT_STATE(m)->stage == SB_SW_POINT_MULT_OP_DONE;
 }
+#endif
 
 // Multiplication-addition using Shamir's trick to produce k_1 * P + k_2 * Q
-
+#if 1 || !SB_FE_ASM
 // sb_sw_point_mult_add_z_update computes the new Z and then performs co-Z
 // point addition at a cost of 7MM + 7A
-static void sb_sw_point_mult_add_z_update(sb_sw_context_t q[static const 1],
+static void __attribute__((noipa)) sb_sw_point_mult_add_z_update(sb_sw_context_t q[static const 1],
                                           const sb_sw_curve_t s[static const 1])
 {
-    sb_fe_mod_sub(C_T6(q), C_X2(q), C_X1(q), s->p); // t6 = x2 - x1 = Z' / Z
-    sb_fe_mont_mult(C_T5(q), C_T6(q), MULT_Z(q), s->p); // updated Z
-    *MULT_Z(q) = *C_T5(q);
+#if FEATURE_CANARIES
+    canary_entry(SB_SW_POINT_MULT_ADD_Z_UPDATE);
+#endif
+    SB_FE_START(q,s)
+    SB_FE_MOD_SUB  (O_C_T6, O_C_X2, O_C_X1, 0)    //  sb_fe_mod_sub  (C_T6(q), C_X2(q), C_X1(q), s->p);   // t6 = x2 - x1 = Z' / Z
+    SB_FE_MONT_MULT(O_C_T5, O_C_T6, O_MULT_Z, 0)  //  sb_fe_mont_mult(C_T5(q), C_T6(q), MULT_Z(q), s->p); // updated Z
+    SB_FE_MOV(O_MULT_Z,O_C_T5)                    //  *MULT_Z(q) = *C_T5(q);
 
-    sb_sw_point_co_z_add_update_zup(q, s);
+    // Manually inlined from sb_sw_point_co_z_add_update_zup(q, s);
+
+    SB_FE_MONT_SQUARE(O_C_T5, O_C_T6,         0)  //  sb_fe_mont_square(C_T5(c), C_T6(c), s->p);        // t5 = (x2 - x1)^2 = (Z' / Z)^2 = A
+    SB_FE_MONT_MULT  (O_C_T6, O_C_X2, O_C_T5, 0)  //  sb_fe_mont_mult(C_T6(c), C_X2(c), C_T5(c), s->p); // t6 = x2 * A = C
+    SB_FE_MONT_MULT  (O_C_X2, O_C_X1, O_C_T5, 0)  //  sb_fe_mont_mult(C_X2(c), C_X1(c), C_T5(c), s->p); // t3 = x1 * A = B = x1'
+    SB_FE_MOD_SUB    (O_C_T7, O_C_Y2, O_C_Y1, 0)  //  sb_fe_mod_sub(C_T7(c), C_Y2(c), C_Y1(c), s->p);   // t7 = y2 - y1
+    SB_FE_MOD_ADD    (O_C_T5, O_C_X2, O_C_T6, 0)  //  sb_fe_mod_add(C_T5(c), C_X2(c), C_T6(c), s->p);   // t5 = B + C
+    SB_FE_MOD_SUB    (O_C_T6, O_C_T6, O_C_X2, 0)  //  sb_fe_mod_sub(C_T6(c), C_T6(c), C_X2(c), s->p);   // t6 = C - B = (x2 - x1)^3 = (Z' / Z)^3
+    SB_FE_MONT_MULT  (O_C_Y2, O_C_Y1, O_C_T6, 0)  //  sb_fe_mont_mult(C_Y2(c), C_Y1(c), C_T6(c), s->p); // y1' = y1 * (Z' / Z)^3 = E
+    SB_FE_MONT_SQUARE(O_C_X1, O_C_T7,         0)  //  sb_fe_mont_square(C_X1(c), C_T7(c), s->p);        // t1 = (y2 - y1)^2 = D
+    SB_FE_MOD_SUB    (O_C_X1, O_C_X1, O_C_T5, 0)  //  sb_fe_mod_sub(C_X1(c), C_X1(c), C_T5(c), s->p);   // x3 = D - B - C
+    SB_FE_MOD_SUB    (O_C_T6, O_C_X2, O_C_X1, 0)  //  sb_fe_mod_sub(C_T6(c), C_X2(c), C_X1(c), s->p);   // t6 = B - x3
+    SB_FE_MONT_MULT  (O_C_Y1, O_C_T7, O_C_T6, 0)  //  sb_fe_mont_mult(C_Y1(c), C_T7(c), C_T6(c), s->p); // t4 = (y2 - y1) * (B - x3)
+    SB_FE_MOD_SUB    (O_C_Y1, O_C_Y1, O_C_Y2, 0)  //  sb_fe_mod_sub(C_Y1(c), C_Y1(c), C_Y2(c), s->p);   // y3 = (y2 - y1) * (B - x3) - E
+    SB_FE_STOP
+
+#if FEATURE_CANARIES
+    canary_exit_void(SB_SW_POINT_MULT_ADD_Z_UPDATE);
+#endif
 }
+#else
+extern void sb_sw_point_mult_add_z_update(sb_sw_context_t q[static const 1],
+                                          const sb_sw_curve_t s[static const 1]);
 
+#endif
+
+#if 1 || !SB_FE_ASM
 // sb_sw_point_mult_add_apply_z applies a Z value to the selected point
 // (H, P + H, G + H, or P + G + H) at a cost of 4MM
 static void sb_sw_point_mult_add_apply_z(sb_sw_context_t q[static const 1],
                                          const sb_sw_curve_t s[static const 1])
 {
-    sb_fe_mont_square(C_T6(q), MULT_Z(q), s->p); // Z^2
-
-    sb_fe_mont_mult(C_T7(q), C_X2(q), C_T6(q), s->p);
-    *C_X2(q) = *C_T7(q);
-
-    sb_fe_mont_mult(C_T7(q), C_T6(q), MULT_Z(q), s->p); // Z^3
-    sb_fe_mont_mult(C_T6(q), C_Y2(q), C_T7(q), s->p);
-    *C_Y2(q) = *C_T6(q);
+#if FEATURE_CANARIES
+    canary_entry(SB_SW_POINT_MULT_ADD_APPLY_Z);
+#endif
+    SB_FE_START(q,s)
+    SB_FE_MONT_SQUARE(O_C_T6, O_MULT_Z,           0)        //  sb_fe_mont_square(C_T6(q), MULT_Z(q), s->p);        // Z^2
+    SB_FE_MONT_MULT  (O_C_T7, O_C_X2,   O_C_T6,   0)   //  sb_fe_mont_mult(C_T7(q), C_X2(q), C_T6(q), s->p);
+    SB_FE_MOV        (O_C_X2, O_C_T7)                                //  *C_X2(q) = *C_T7(q);
+    SB_FE_MONT_MULT  (O_C_T7, O_C_T6,   O_MULT_Z, 0) //  sb_fe_mont_mult(C_T7(q), C_T6(q), MULT_Z(q), s->p); // Z^3
+    SB_FE_MONT_MULT  (O_C_T6, O_C_Y2,   O_C_T7,   0)   //  sb_fe_mont_mult(C_T6(q), C_Y2(q), C_T7(q), s->p);
+    SB_FE_MOV        (O_C_Y2, O_C_T6)                                //  *C_Y2(q) = *C_T6(q);
+    SB_FE_STOP
+#if FEATURE_CANARIES
+    canary_exit_void(SB_SW_POINT_MULT_ADD_APPLY_Z);
+#endif
 }
+#else
+extern void sb_sw_point_mult_add_apply_z(sb_sw_context_t q[static const 1],
+                                         const sb_sw_curve_t s[static const 1]);
+#endif
 
+#if !SB_FE_ASM
 // sb_sw_point_mult_add_select selects the point to conjugate-add to the
 // running total based on the bits of the given input scalars
 static void sb_sw_point_mult_add_select(const sb_word_t bp, const sb_word_t bg,
@@ -651,23 +1076,63 @@ static void sb_sw_point_mult_add_select(const sb_word_t bp, const sb_word_t bg,
     // if bp = 0 and bg = 1, select g + h
     // if bp = 1 and bg = 0, select p + h
     // if bp = 1 and bg = 1, select p + g + h
-    *C_X2(q) = s->h_r.x;
-    *C_Y2(q) = s->h_r.y;
+    SB_FE_START(q,s);
+    SB_FE_MOV_SREL(O_C_X2,O_CURVE_H_R_X);     // *C_X2(q) = s->h_r.x;
+    SB_FE_MOV_SREL(O_C_Y2,O_CURVE_H_R_Y);     // *C_Y2(q) = s->h_r.y;
+    SB_FE_MOV_SREL(O_C_T5,O_CURVE_G_H_R_X);   // *C_T5(q) = s->g_h_r.x;
+    SB_FE_MOV_SREL(O_C_T6,O_CURVE_G_H_R_Y);   // *C_T6(q) = s->g_h_r.y;
+    SB_FE_STOP;
 
-    *C_T5(q) = s->g_h_r.x;
-    *C_T6(q) = s->g_h_r.y;
     sb_fe_ctswap(bg, C_X2(q), C_T5(q));
     sb_fe_ctswap(bg, C_Y2(q), C_T6(q));
 
-    *C_T5(q) = *MULT_POINT_X(q);
-    *C_T6(q) = *MULT_POINT_Y(q);
+    SB_FE_START(q,s);
+    SB_FE_MOV(O_C_T5,O_MULT_POINT_X);   // *C_T5(q) = *MULT_POINT_X(q);
+    SB_FE_MOV(O_C_T6,O_MULT_POINT_Y);   // *C_T6(q) = *MULT_POINT_Y(q);
+    SB_FE_STOP;
+
     sb_fe_ctswap(bp, C_X2(q), C_T5(q));
     sb_fe_ctswap(bp, C_Y2(q), C_T6(q));
 
-    *C_T5(q) = MULT_ADD_PG(q)->x;
-    *C_T6(q) = MULT_ADD_PG(q)->y;
+    SB_FE_START(q,s);
+    SB_FE_MOV(O_C_T5,O_MULT_ADD_PG_X);   // *C_T5(q) = *MULT_ADD_PG(q)->x;
+    SB_FE_MOV(O_C_T6,O_MULT_ADD_PG_Y);   // *C_T6(q) = *MULT_ADD_PG(q)->y;
+    SB_FE_STOP;
+
     sb_fe_ctswap(bp & bg, C_X2(q), C_T5(q));
     sb_fe_ctswap(bp & bg, C_Y2(q), C_T6(q));
+
+    sb_sw_point_mult_add_apply_z(q, s);
+}
+#endif
+
+// as above but without the constant time guarantee (but probably close in practice)
+static void sb_sw_point_mult_add_select_NOT_CT(const sb_word_t bp, const sb_word_t bg,
+                                               sb_sw_context_t q[static const 1],
+                                               const sb_sw_curve_t s[static const 1])
+{
+    // select a point S for conjugate addition with R
+    // if bp = 0 and bg = 0, select h
+    // if bp = 0 and bg = 1, select g + h
+    // if bp = 1 and bg = 0, select p + h
+    // if bp = 1 and bg = 1, select p + g + h
+
+    static_assert(O_C_X2+1==O_C_Y2);
+    static_assert(O_CURVE_H_R_X+8==O_CURVE_H_R_Y);
+    static_assert(O_CURVE_G_H_R_X+8==O_CURVE_G_H_R_Y);
+    static_assert(O_MULT_POINT_X+1==O_MULT_POINT_Y);
+    static_assert(O_MULT_ADD_PG_X+1==O_MULT_ADD_PG_Y);
+
+    const sb_fe_pair_t*p;
+
+    if(!bp) {
+      if(!bg) p=&s->h_r;
+      else    p=&s->g_h_r;
+    } else {
+      if(!bg) p=(sb_fe_pair_t*)MULT_POINT_X(q);
+      else    p=(sb_fe_pair_t*)&MULT_ADD_PG(q)->x;
+      }
+    sb_fe_mov_pair(C_X2(q),&p->x);
 
     sb_sw_point_mult_add_apply_z(q, s);
 }
@@ -729,163 +1194,171 @@ static void sb_sw_point_mult_add_select(const sb_word_t bp, const sb_word_t bg,
 // argued that refusing to verify such signatures is, in fact, the preferable
 // choice, as any signature created with this private key might be forged.
 
+// USED
 // Produces kp * P + kg * G in (x1, y1) with Z * R in Z
-static _Bool sb_sw_point_mult_add_z_continue
+static void sb_sw_point_mult_add_z_continue
     (sb_sw_context_t q[static const 1],
      const sb_sw_curve_t s[static const 1])
 {
-    sb_sw_context_saved_state_t state = *MULT_STATE(q);
+// SB_SW_VERIFY_OP_STAGE_INV_Z: // ==1
 
-    switch (state.stage) {
-        case SB_SW_VERIFY_OP_STAGE_INV_Z: {
-            // Subtract one from kg to account for the addition of (2^257 - 1) * H = G
-            sb_fe_sub(MULT_ADD_KG(q), MULT_ADD_KG(q), &SB_FE_ONE);
+    // Subtract one from kg to account for the addition of (2^257 - 1) * H = G
 
-            // multiply (x, y) of P by R
-            sb_fe_mont_convert(C_X1(q), MULT_POINT_X(q), s->p);
-            *MULT_POINT_X(q) = *C_X1(q);
-            sb_fe_mont_convert(C_Y1(q), MULT_POINT_Y(q), s->p);
-            *MULT_POINT_Y(q) = *C_Y1(q);
+    // multiply (x, y) of P by R
+    SB_FE_START(q,s)
+    SB_FE_MOV_CONST(O_C_T8,1)
+    SB_FE_MOD_SUB(O_MULT_ADD_KG,O_MULT_ADD_KG,O_C_T8,0)// sb_fe_sub(MULT_ADD_KG(q), MULT_ADD_KG(q), &SB_FE_ONE);
+    SB_FE_MONT_CONVERT(O_C_X1,O_MULT_POINT_X,0)        // sb_fe_mont_convert(C_X1(q), MULT_POINT_X(q), s->p);
+    SB_FE_MOV(O_MULT_POINT_X,O_C_X1)                   // *MULT_POINT_X(q) = *C_X1(q);
+    SB_FE_MONT_CONVERT(O_C_Y1,O_MULT_POINT_Y,0)        // sb_fe_mont_convert(C_Y1(q), MULT_POINT_Y(q), s->p);
+    SB_FE_MOV(O_MULT_POINT_Y,O_C_Y1)                   // *MULT_POINT_Y(q) = *C_Y1(q);
+    SB_FE_MOV(O_C_T8,O_MULT_Z)                         // *C_T8(q) = *MULT_Z(q); // Save initial Z in T8 until it can be applied
+    SB_FE_MOV_SREL(O_C_X2,O_CURVE_H_R_X)               // *C_X2(q) = s->h_r.x;
+    SB_FE_MOV_SREL(O_C_Y2,O_CURVE_H_R_Y)               // *C_Y2(q) = s->h_r.y;
+    SB_FE_STOP
 
-            *C_X2(q) = s->h_r.x;
-            *C_Y2(q) = s->h_r.y;
+    // P and H are in affine coordinates, so our current Z is one (R in
+    // Montgomery domain)
+    sb_fe_mov(MULT_Z(q),&__get_opaque_ptr(s)->p->r_mod_p); //  *MULT_Z(q) = s->p->r_mod_p;
 
-            // Save initial Z in T8 until it can be applied
-            *C_T8(q) = *MULT_Z(q);
+    // (x1, x2) = P + H; (x2, y2) = P'
+    sb_sw_point_mult_add_z_update(q, s);
 
-            // P and H are in affine coordinates, so our current Z is one (R in
-            // Montgomery domain)
-            *MULT_Z(q) = s->p->r_mod_p;
+    // Apply Z to G before co-Z addition of (P + H) and G
+    SB_FE_START(q,s)
+    SB_FE_MOV_SREL(O_C_X2,O_CURVE_G_R_X)  // *C_X2(q) = s->g_r.x;
+    SB_FE_MOV_SREL(O_C_Y2,O_CURVE_G_R_Y)  // *C_Y2(q) = s->g_r.y;
+    SB_FE_STOP
+    sb_sw_point_mult_add_apply_z(q, s);
 
-            // (x1, x2) = P + H; (x2, y2) = P'
+    // (x1, x2) = P + G + H; (x2, y2) = P + H
+    sb_sw_point_mult_add_z_update(q, s);
+
+    // Invert Z and multiply so that P + H and P + G + H are in affine
+    // coordinates
+    SB_FE_START(q,s)
+    SB_FE_MOV(O_C_T5,O_MULT_Z)                           // *C_T5(q) = *MULT_Z(q); // t5 = Z * R
+    SB_FE_MOD_INV_R(O_C_T5,O_C_T6,O_C_T7,0)              // sb_fe_mod_inv_r(C_T5(q), C_T6(q), C_T7(q), s->p); // t5 = Z^-1 * R
+    SB_FE_MONT_SQUARE(O_C_T6,O_C_T5,0)                   // sb_fe_mont_square(C_T6(q), C_T5(q), s->p); // t6 = Z^-2 * R
+    SB_FE_MONT_MULT  (O_C_T7,O_C_T5,O_C_T6,0)            // sb_fe_mont_mult(C_T7(q), C_T5(q), C_T6(q), s->p); // t7 = Z^-3 * R
+    SB_FE_MONT_MULT  (O_MULT_POINT_X,O_C_X2,O_C_T6,0)    // sb_fe_mont_mult(MULT_POINT_X(q), C_X2(q), C_T6(q), s->p); // Apply Z to P + H
+    SB_FE_MONT_MULT  (O_MULT_POINT_Y,O_C_Y2,O_C_T7,0)    // sb_fe_mont_mult(MULT_POINT_Y(q), C_Y2(q), C_T7(q), s->p);
+    SB_FE_MONT_MULT  (O_MULT_ADD_PG_X,O_C_X1,O_C_T6,0)   // sb_fe_mont_mult(&MULT_ADD_PG(q)->x, C_X1(q), C_T6(q), s->p); // Apply Z to P + G + H
+    SB_FE_MONT_MULT  (O_MULT_ADD_PG_Y,O_C_Y1,O_C_T7,0)   // sb_fe_mont_mult(&MULT_ADD_PG(q)->y, C_Y1(q), C_T7(q), s->p);
+
+    // Computation begins with R = H. If bit 255 of kp and kpg are both 0,
+    // this would lead to a point doubling!
+    // Avoid the inadvertent doubling in the first bit, so that the regular
+    // ladder can start at 2 * H + S
+
+    SB_FE_MOV_SREL(O_C_X2,O_CURVE_H_R_X) // *C_X2(q) = s->h_r.x;
+    SB_FE_MOV_SREL(O_C_Y2,O_CURVE_H_R_Y) // *C_Y2(q) = s->h_r.y;
+
+// manually inlined from sb_sw_point_initial_double(q, s);
+    SB_FE_MOD_DOUBLE(O_C_T5,O_C_Y2,0)                 // sb_fe_mod_double(C_T5(c), C_Y2(c), s->p); // t5 = Z
+    SB_FE_MONT_SQUARE(O_C_Y1,O_C_X2,0)                // sb_fe_mont_square(C_Y1(c), C_X2(c), s->p); // t2 = x^2
+// in the SECP526K1 curva a_r is zero, so we can skip this operation
+#if SB_SW_P256_SUPPORT
+    SB_FE_STOP
+    sb_fe_mod_sub(C_Y1(q), C_Y1(q), s->minus_a_r_over_three, s->p); // t2 = x^2 + a / 3
+    SB_FE_START(q,s)
+#endif
+    SB_FE_MOD_DOUBLE(O_C_X1, O_C_Y1, 0)        // sb_fe_mod_double(C_X1(c), C_Y1(c), s->p);          // t1 = 2 * (x^2 + a / 3)
+    SB_FE_MOD_ADD(O_C_Y1, O_C_Y1, O_C_X1, 0)   // sb_fe_mod_add(C_Y1(c), C_Y1(c), C_X1(c), s->p);    // t2 = (3 * x^2 + a) = B
+
+    SB_FE_MONT_SQUARE(O_C_T6, O_C_Y2, 0)       // sb_fe_mont_square(C_T6(c), C_Y2(c), s->p);         // t6 = y^2
+    SB_FE_MOD_DOUBLE(O_C_Y2, O_C_T6, 0)        // sb_fe_mod_double(C_Y2(c), C_T6(c), s->p);          // t4 = 2 * y^2
+    SB_FE_MOD_DOUBLE(O_C_T6, O_C_Y2, 0)        // sb_fe_mod_double(C_T6(c), C_Y2(c), s->p);          // t6 = 4 * y^2
+    SB_FE_MONT_MULT(O_C_X1, O_C_X2, O_C_T6, 0) // sb_fe_mont_mult(C_X1(c), C_X2(c), C_T6(c), s->p);  // t1 = 4 * x * y^2 = A
+
+    SB_FE_MONT_SQUARE(O_C_X2, O_C_Y1, 0)       // sb_fe_mont_square(C_X2(c), C_Y1(c), s->p);         // t3 = B^2
+
+    SB_FE_MOD_SUB(O_C_X2, O_C_X2, O_C_X1, 0)   // sb_fe_mod_sub(C_X2(c), C_X2(c), C_X1(c), s->p);    // t2 = B^2 - A
+    SB_FE_MOD_SUB(O_C_X2, O_C_X2, O_C_X1, 0)   // sb_fe_mod_sub(C_X2(c), C_X2(c), C_X1(c), s->p);    // x2 = B^2 - 2 * A = X2
+
+    SB_FE_MOD_SUB(O_C_T6, O_C_X1, O_C_X2, 0)   // sb_fe_mod_sub(C_T6(c), C_X1(c), C_X2(c), s->p);    // t6 = A - X2
+    SB_FE_MONT_MULT(O_C_T7, O_C_Y1, O_C_T6, 0) // sb_fe_mont_mult(C_T7(c), C_Y1(c), C_T6(c), s->p);  // t7 = B * (A - X2)
+
+    SB_FE_MONT_SQUARE(O_C_Y1, O_C_Y2, 0)       // sb_fe_mont_square(C_Y1(c), C_Y2(c), s->p);         // t2 = (2 * y^2)^2 = 4 * y^4
+    SB_FE_MOD_DOUBLE(O_C_Y1, O_C_Y1, 0)        // sb_fe_mod_double(C_Y1(c), C_Y1(c), s->p);          // Y1 = 8 * y^4 = Z^3 * y
+    SB_FE_MOD_SUB(O_C_Y2, O_C_T7, O_C_Y1, 0)   // sb_fe_mod_sub(C_Y2(c), C_T7(c), C_Y1(c), s->p);    // Y2 = B * (A - X2) - Y1
+
+    // 2 * H is now in (x2, y2); Z is in t5
+
+    // apply initial Z
+    SB_FE_MOV(O_MULT_Z,O_C_T8) // *MULT_Z(q) = *C_T8(q);
+    SB_FE_STOP
+    sb_sw_point_mult_add_apply_z(q, s);
+
+    // z coordinate of (x2, y2) is now iz * t5
+    SB_FE_START(q,s)
+    SB_FE_MONT_MULT(O_C_T6,O_MULT_Z,O_C_T5,0)         // sb_fe_mont_mult(C_T6(q), MULT_Z(q), C_T5(q), s->p);
+    SB_FE_MOV(O_MULT_Z,O_C_T6)                        // *MULT_Z(q) = *C_T6(q);
+    SB_FE_MOV(O_C_X1,O_C_X2)                          // *C_X1(q) = *C_X2(q); // move 2 * H to (x1, y1)
+    SB_FE_MOV(O_C_Y1,O_C_Y2)                          // *C_Y1(q) = *C_Y2(q);
+    SB_FE_STOP
+
+    // SB_SW_VERIFY_OP_STAGE_LADDER:
+    // 14MM + 14A + 4MM co-Z update = 18MM + 14A per bit
+
+    // The algorithm used here is regular and reuses the existing co-Z addition
+    // operation. If you want a variable-time ladder, consider using
+    // Algorithms 14 and 17 from Rivain 2011 instead.
+
+    // Note that mixed Jacobian-affine doubling-addition can be done in 18MM.
+    // Assuming a Hamming weight of ~128 on both scalars and 8MM doubling, the
+    // expected performance of a variable-time Jacobian double-and-add
+    // implementation would be (3/4 * 18MM) + (1/4 * 8MM) = 15.5MM/bit
+
+    // Note that this algorithm may also not be SPA- or DPA-resistant, as H,
+    // P + H, G + H, and P + G + H are stored and used in affine coordinates,
+    // so the co-Z update of these variables might be detectable even with
+    // Z blinding.
+
+    // This loop goes from 255 down to 0, inclusive. When state.i
+    // reaches 0 and is decremented, it wraps around to the most
+    // positive sb_size_t, which is greater than or equal to SB_FE_BITS
+    // (by quite a lot!).
+
+    for ( int i=SB_FE_BITS - 1 ; i>=0; i-- ) {
+        const sb_word_t bp = sb_fe_test_bit(MULT_K(q), (unsigned int)i);
+        const sb_word_t bg = sb_fe_test_bit(MULT_ADD_KG(q), (unsigned int)i);
+
+        sb_sw_point_mult_add_select_NOT_CT(bp, bg, q, s);
+
+        // (x1, y1) = (R + S), (x2, y2) = R'
+        sb_sw_point_mult_add_z_update(q, s);
+
+        // The initial point has already been doubled
+        if (i < SB_FE_BITS - 1) {
+            // R := (R + S) + R = 2 * R + S
             sb_sw_point_mult_add_z_update(q, s);
-
-            // Apply Z to G before co-Z addition of (P + H) and G
-            *C_X2(q) = s->g_r.x;
-            *C_Y2(q) = s->g_r.y;
-            sb_sw_point_mult_add_apply_z(q, s);
-
-            // (x1, x2) = P + G + H; (x2, y2) = P + H
-            sb_sw_point_mult_add_z_update(q, s);
-
-            // Invert Z and multiply so that P + H and P + G + H are in affine
-            // coordinates
-            *C_T5(q) = *MULT_Z(q); // t5 = Z * R
-            sb_fe_mod_inv_r(C_T5(q), C_T6(q), C_T7(q), s->p); // t5 = Z^-1 * R
-            sb_fe_mont_square(C_T6(q), C_T5(q), s->p); // t6 = Z^-2 * R
-            sb_fe_mont_mult(C_T7(q), C_T5(q), C_T6(q), s->p); // t7 = Z^-3 * R
-
-            // Apply Z to P + H
-            sb_fe_mont_mult(MULT_POINT_X(q), C_X2(q), C_T6(q), s->p);
-            sb_fe_mont_mult(MULT_POINT_Y(q), C_Y2(q), C_T7(q), s->p);
-
-            // Apply Z to P + G + H
-            sb_fe_mont_mult(&MULT_ADD_PG(q)->x, C_X1(q), C_T6(q), s->p);
-            sb_fe_mont_mult(&MULT_ADD_PG(q)->y, C_Y1(q), C_T7(q), s->p);
-
-            // Computation begins with R = H. If bit 255 of kp and kpg are both 0,
-            // this would lead to a point doubling!
-            // Avoid the inadvertent doubling in the first bit, so that the regular
-            // ladder can start at 2 * H + S
-
-            *C_X2(q) = s->h_r.x;
-            *C_Y2(q) = s->h_r.y;
-
-            sb_sw_point_initial_double(q, s);
-            // 2 * H is now in (x2, y2); Z is in t5
-
-            // apply initial Z
-            *MULT_Z(q) = *C_T8(q);
-            sb_sw_point_mult_add_apply_z(q, s);
-
-            // z coordinate of (x2, y2) is now iz * t5
-            sb_fe_mont_mult(C_T6(q), MULT_Z(q), C_T5(q), s->p);
-            *MULT_Z(q) = *C_T6(q);
-
-            // move 2 * H to (x1, y1)
-            *C_X1(q) = *C_X2(q);
-            *C_Y1(q) = *C_Y2(q);
-
-            state.i = SB_FE_BITS - 1;
-            state.stage = SB_SW_VERIFY_OP_STAGE_LADDER;
-            *MULT_STATE(q) = state;
-            return 0;
-        }
-        case SB_SW_VERIFY_OP_STAGE_LADDER: {
-            // 14MM + 14A + 4MM co-Z update = 18MM + 14A per bit
-
-            // The algorithm used here is regular and reuses the existing co-Z addition
-            // operation. If you want a variable-time ladder, consider using
-            // Algorithms 14 and 17 from Rivain 2011 instead.
-
-            // Note that mixed Jacobian-affine doubling-addition can be done in 18MM.
-            // Assuming a Hamming weight of ~128 on both scalars and 8MM doubling, the
-            // expected performance of a variable-time Jacobian double-and-add
-            // implementation would be (3/4 * 18MM) + (1/4 * 8MM) = 15.5MM/bit
-
-            // Note that this algorithm may also not be SPA- or DPA-resistant, as H,
-            // P + H, G + H, and P + G + H are stored and used in affine coordinates,
-            // so the co-Z update of these variables might be detectable even with
-            // Z blinding.
-
-            // This loop goes from 255 down to 0, inclusive. When state.i
-            // reaches 0 and is decremented, it wraps around to the most
-            // positive sb_size_t, which is greater than or equal to SB_FE_BITS
-            // (by quite a lot!).
-
-            for (sb_bitcount_t ops = 0;
-                 state.i < SB_FE_BITS && ops < SB_SW_POINT_ITERATIONS;
-                 state.i--, ops++) {
-                const sb_word_t bp = sb_fe_test_bit(MULT_K(q), state.i);
-                const sb_word_t bg = sb_fe_test_bit(MULT_ADD_KG(q), state.i);
-
-                sb_sw_point_mult_add_select(bp, bg, q, s);
-
-                // (x1, y1) = (R + S), (x2, y2) = R'
-                sb_sw_point_mult_add_z_update(q, s);
-
-                // The initial point has already been doubled
-                if (state.i < SB_FE_BITS - 1) {
-                    // R := (R + S) + R = 2 * R + S
-                    sb_sw_point_mult_add_z_update(q, s);
-                }
-            }
-
-            // If the loop terminated because state.i was decremented from 0,
-            // then state.i is the most positive sb_size_t, which is
-            // >= SB_FE_BITS
-
-            if (state.i >= SB_FE_BITS) {
-                *C_T6(q) = *C_X1(q);
-                sb_fe_mont_reduce(C_X1(q), C_T6(q), s->p);
-                *C_T6(q) = *C_Y1(q);
-                sb_fe_mont_reduce(C_Y1(q), C_T6(q), s->p);
-
-                state.stage = SB_SW_VERIFY_OP_STAGE_TEST;
-            }
-
-            *MULT_STATE(q) = state;
-            return 0;
-        }
-        default: {
-            return 1;
         }
     }
 
+
+    SB_FE_START(q,s)
+    SB_FE_MOV(O_C_T6,O_C_X1)                                   // *C_T6(q) = *C_X1(q);
+    SB_FE_MOV(O_C_T7,O_C_Y1)                                   // *C_T6(q) = *C_Y1(q);
+    SB_FE_MOV_CONST(O_C_T8,1)
+    SB_FE_MONT_MULT(O_C_X1,O_C_T6,O_C_T8,0)                    // sb_fe_mont_reduce(C_X1(q), C_T6(q), s->p); : this is the same as mont_mult by SB_FE_ONE
+    SB_FE_MONT_MULT(O_C_Y1,O_C_T7,O_C_T8,0)                    // sb_fe_mont_reduce(C_Y1(q), C_T7(q), s->p); : this is the same as mont_mult by SB_FE_ONE
+    SB_FE_STOP
 }
 
-// Given a point context with x in *C_X1(c), computes
-// y^2 = x^3 + a * x + b in *C_Y1(c)
-static void sb_sw_curve_y2(sb_sw_context_t c[static const 1],
-                           const sb_sw_curve_t s[static const 1])
-{
-    sb_fe_mont_convert(C_T5(c), C_X1(c), s->p); // t5 = x * R
-    sb_fe_mont_mult(C_T6(c), C_T5(c), C_X1(c), s->p); // t6 = x^2
-    sb_fe_mod_sub(C_T6(c), C_T6(c), &s->minus_a, s->p); // t6 = x^2 + a
-    sb_fe_mont_mult(C_Y1(c), C_T5(c), C_T6(c),
-                    s->p); // y1 = (x^2 + a) * x * R * R^-1 = x^3 + a * x
-    sb_fe_mod_add(C_Y1(c), C_Y1(c), &s->b, s->p); // y1 = y^2 = x^3 + a * x + b
-}
+// // Given a point context with x in *C_X1(c), computes
+// // y^2 = x^3 + a * x + b in *C_Y1(c)
+// static inline void sb_sw_curve_y2(sb_sw_context_t c[static const 1],
+//                            const sb_sw_curve_t s[static const 1])
+// {
+// #if SB_SW_P256_SUPPORT
+//       sb_fe_mont_convert(C_T5(c), C_X1(c), s->p); // t5 = x * R
+//       sb_fe_mont_mult(C_T6(c), C_T5(c), C_X1(c), s->p);   // t6 = x^2
+//       sb_fe_mod_sub(C_T6(c), C_T6(c), &s->minus_a, s->p); // t6 = x^2 + a
+//       sb_fe_mont_mult(C_Y1(c), C_T5(c), C_T6(c), s->p);       // sb_fe_mont_mult(C_Y1(c), C_T5(c), C_T6(c), s->p);   // y1 = (x^2 + a) * x * R * R^-1 = x^3 + a * x
+//       sb_fe_mod_add  (C_Y1(c), C_Y1(c), &s->b, s->p);           // sb_fe_mod_add(C_Y1(c), C_Y1(c), &s->b, s->p);       // y1 = y^2 = x^3 + a * x + b
+// #endif
+// }
 
 // See SP 800-56A rev 3, section 5.6.2.3.4
 // Note that the "full" test in 5.6.2.3.3 and the "partial" test in 5.6.2.3.4
@@ -901,42 +1374,93 @@ static void sb_sw_curve_y2(sb_sw_context_t c[static const 1],
 // points of the form (0, Y) will be converted to quasi-reduced form in this
 // routine.
 
-static sb_word_t
+static sb_bool_t
 sb_sw_point_validate(sb_sw_context_t c[static const 1],
                      const sb_sw_curve_t s[static const 1])
 {
-    sb_word_t r = 1;
-
     // 5.6.2.3.4 step 1: the point at infinity is not valid.
     // The only point with (X, 0) is the point at infinity. On the curve
     // P-256, the point (0, ±√B) is a valid point. The input point
     // representation (X, P) will be rejected by the step 2 test.
-    r &= !sb_fe_equal(&MULT_POINT(c)->y, &SB_FE_ZERO);
+    SB_RETURN_FALSE_IF_NOT_CHECKED(SB_FE_HARD_NEQZ(&MULT_POINT(c)->y));  // if(SB_FE_EQ(&MULT_POINT(c)->y, &SB_FE_ZERO)) r=0;  // r &= !sb_fe_equal(&MULT_POINT(c)->y, &SB_FE_ZERO);
 
     // 5.6.2.3.4 step 2: unreduced points are not valid.
-    r &= (sb_fe_lt(&MULT_POINT(c)->x, &s->p->p) &&
-          sb_fe_lt(&MULT_POINT(c)->y, &s->p->p));
+    // r &= (sb_fe_lt(&MULT_POINT(c)->x, &s->p->p) &&
+    //       sb_fe_lt(&MULT_POINT(c)->y, &s->p->p));
+    sb_bool_t v0 = SB_FE_HARD_LO(&MULT_POINT(c)->x, &s->p->p);
+    sb_bool_t v1 = SB_FE_HARD_LO(&MULT_POINT(c)->y, &s->p->p);
+    SB_RETURN_FALSE_IF_NOT(v0);
+    SB_RETURN_FALSE_IF_NOT(v1);
+    SB_FE_ASSERT_AND_TRUE(v0, v1);
 
-    // Valid Y values are now ensured to be quasi-reduced. Invalid Y values
-    // have been flagged above, but must be quasi-reduced for the remainder
-    // of the checks.
-    sb_fe_mod_reduce(&MULT_POINT(c)->y, s->p);
+#if SB_SW_SECP256K1_SUPPORT 
+    if(s==&SB_CURVE_SECP256K1) {
+#else
+    if(0) {
+#endif    
+      // Valid Y values are now ensured to be quasi-reduced. Invalid Y values
+      // have been flagged above, but must be quasi-reduced for the remainder
+      // of the checks.
+      SB_FE_START(c,s)
+      SB_FE_MOD_REDUCE(O_MULT_POINT_Y,0) // sb_fe_mod_reduce(&MULT_POINT(c)->y, s->p);
 
-    // If the input point has the form (0, Y) then the X value may be zero.
-    // The modular quasi-reduction routine will change this to (P, Y).
-    sb_fe_mod_reduce(&MULT_POINT(c)->x, s->p);
+      // If the input point has the form (0, Y) then the X value may be zero.
+      // The modular quasi-reduction routine will change this to (P, Y).
+      SB_FE_MOD_REDUCE(O_MULT_POINT_X,0) // sb_fe_mod_reduce(&MULT_POINT(c)->x, s->p);
 
-    // 5.6.2.3.4 step 3: verify y^2 = x^3 + ax + b
-    sb_fe_mont_square(C_T5(c), &MULT_POINT(c)->y, s->p); // t5 = y^2 * R^-1
-    sb_fe_mont_convert(C_Y2(c), C_T5(c), s->p); // y2 = y^2
-    *C_X1(c) = MULT_POINT(c)->x;
-    sb_sw_curve_y2(c, s);
+      // 5.6.2.3.4 step 3: verify y^2 = x^3 + ax + b
+      SB_FE_MONT_SQUARE(O_C_T5,O_MULT_POINT_Y,0)    // sb_fe_mont_square(C_T5(c), &MULT_POINT(c)->y, s->p); // t5 = y^2 * R^-1
+      SB_FE_MONT_CONVERT(O_C_Y2,O_C_T5,0)           // sb_fe_mont_convert(C_Y2(c), C_T5(c), s->p); // y2 = y^2
+      SB_FE_MOV(O_C_X1,O_MULT_POINT_X)              // *C_X1(c) = MULT_POINT(c)->x;
 
-    r &= sb_fe_equal(C_Y1(c), C_Y2(c));
+    // manually inlined from sb_sw_curve_y2(c, s);
+      SB_FE_MONT_CONVERT(O_C_T5,O_C_X1,0)           // sb_fe_mont_convert(C_T5(c), C_X1(c), s->p); // t5 = x * R
+      SB_FE_MONT_MULT   (O_C_T6,O_C_T5,O_C_X1, 0)   // sb_fe_mont_mult(C_T6(c), C_T5(c), C_X1(c), s->p);   // t6 = x^2
+// in the SECP256K1 case a is zero in this case so we can skip these two lines
+//      SB_FE_MOV_SREL    (O_C_T7,O_CURVE_MINUS_A)    // *C_T7(c)=s->minus_a;
+//      SB_FE_MOD_SUB     (O_C_T6,O_C_T6,O_C_T7,0)    // sb_fe_mod_sub  (C_T6(c), C_T6(c), C_T7(c), s->p); // t6 = x^2 + a
+      SB_FE_MONT_MULT   (O_C_Y1,O_C_T5,O_C_T6,0)    // sb_fe_mont_mult(C_Y1(c), C_T5(c), C_T6(c), s->p);   // y1 = (x^2 + a) * x * R * R^-1 = x^3 + a * x
+      // SB_FE_MOV_SREL    (O_C_T5,O_CURVE_B)
+      SB_FE_MOV_CONST   (O_C_T5,7)
+      SB_FE_MOD_ADD     (O_C_Y1,O_C_Y1,O_C_T5,0)    // sb_fe_mod_add(C_Y1(c), C_Y1(c), &s->b, s->p);       // y1 = y^2 = x^3 + a * x + b ; b is 7 in this case
+      SB_FE_STOP
+    } else {
 
-    return r;
+      // we do not use this path as we only implement CURVE_SECP256K1, but keep it for the regression tests
+
+      // Valid Y values are now ensured to be quasi-reduced. Invalid Y values
+      // have been flagged above, but must be quasi-reduced for the remainder
+      // of the checks.
+      SB_FE_START(c,s)
+      SB_FE_MOD_REDUCE(O_MULT_POINT_Y,0) // sb_fe_mod_reduce(&MULT_POINT(c)->y, s->p);
+
+      // If the input point has the form (0, Y) then the X value may be zero.
+      // The modular quasi-reduction routine will change this to (P, Y).
+      SB_FE_MOD_REDUCE(O_MULT_POINT_X,0) // sb_fe_mod_reduce(&MULT_POINT(c)->x, s->p);
+
+      // 5.6.2.3.4 step 3: verify y^2 = x^3 + ax + b
+      SB_FE_MONT_SQUARE(O_C_T5,O_MULT_POINT_Y,0) // sb_fe_mont_square(C_T5(c), &MULT_POINT(c)->y, s->p); // t5 = y^2 * R^-1
+      SB_FE_MONT_CONVERT(O_C_Y2,O_C_T5,0) // sb_fe_mont_convert(C_Y2(c), C_T5(c), s->p); // y2 = y^2
+      SB_FE_MOV(O_C_X1,O_MULT_POINT_X)     // *C_X1(c) = MULT_POINT(c)->x;
+      SB_FE_STOP
+
+      sb_fe_mont_convert(C_T5(c), C_X1(c), s->p); // t5 = x * R
+      sb_fe_mont_mult(C_T6(c), C_T5(c), C_X1(c), s->p);   // t6 = x^2
+#if SB_SW_P256_SUPPORT
+      sb_fe_mod_sub(C_T6(c), C_T6(c), &s->minus_a, s->p); // t6 = x^2 + a
+#endif
+      sb_fe_mont_mult(C_Y1(c), C_T5(c), C_T6(c), s->p);       // sb_fe_mont_mult(C_Y1(c), C_T5(c), C_T6(c), s->p);   // y1 = (x^2 + a) * x * R * R^-1 = x^3 + a * x
+#if SB_SW_P256_SUPPORT
+    sb_fe_mod_add  (C_Y1(c), C_Y1(c), &s->b, s->p);           // sb_fe_mod_add(C_Y1(c), C_Y1(c), &s->b, s->p);       // y1 = y^2 = x^3 + a * x + b
+#else
+    sb_fe_mod_add  (C_Y1(c), C_Y1(c), &secp256k1_b, s->p);           // sb_fe_mod_add(C_Y1(c), C_Y1(c), &s->b, s->p);       // y1 = y^2 = x^3 + a * x + b
+#endif
+      }
+
+      return SB_FE_HARD_EQ(C_Y1(c), C_Y2(c));
 }
 
+#if !BOOTROM_BUILD
 static sb_word_t
 sb_sw_point_decompress(sb_sw_context_t c[static const 1],
                        const sb_word_t sign,
@@ -946,7 +1470,7 @@ sb_sw_point_decompress(sb_sw_context_t c[static const 1],
     sb_word_t r = 1;
 
     // 5.6.2.3.4 step 2: unreduced points are not valid.
-    r &= sb_fe_lt(&MULT_POINT(c)->x, &s->p->p);
+    r &= SB_FE_LO(&MULT_POINT(c)->x, &s->p->p);
 
     // The input X value may be 0 on some curves (such as NIST P-256).
     // The modular quasi-reduction routine will change this to P.
@@ -954,7 +1478,17 @@ sb_sw_point_decompress(sb_sw_context_t c[static const 1],
 
     // Compute y^2 = x^3 + ax + b in C_Y1(c)
     *C_X1(c) = MULT_POINT(c)->x;
-    sb_sw_curve_y2(c, s);
+    sb_fe_mont_convert(C_T5(c), C_X1(c), s->p); // t5 = x * R
+    sb_fe_mont_mult(C_T6(c), C_T5(c), C_X1(c), s->p);   // t6 = x^2
+#if SB_SW_P256_SUPPORT
+    sb_fe_mod_sub(C_T6(c), C_T6(c), &s->minus_a, s->p); // t6 = x^2 + a ; a is zero in the SECP256K1 case
+#endif
+    sb_fe_mont_mult(C_Y1(c), C_T5(c), C_T6(c), s->p);       // sb_fe_mont_mult(C_Y1(c), C_T5(c), C_T6(c), s->p);   // y1 = (x^2 + a) * x * R * R^-1 = x^3 + a * x
+#if SB_SW_P256_SUPPORT
+    sb_fe_mod_add  (C_Y1(c), C_Y1(c), &s->b, s->p);           // sb_fe_mod_add(C_Y1(c), C_Y1(c), &s->b, s->p);       // y1 = y^2 = x^3 + a * x + b
+#else
+    sb_fe_mod_add  (C_Y1(c), C_Y1(c), &secp256k1_b, s->p);           // sb_fe_mod_add(C_Y1(c), C_Y1(c), &s->b, s->p);       // y1 = y^2 = x^3 + a * x + b
+#endif
 
     // Compute the candidate square root
     r &= sb_fe_mod_sqrt(C_Y1(c), C_T5(c), C_T6(c), C_T7(c), C_T8(c), s->p);
@@ -968,35 +1502,58 @@ sb_sw_point_decompress(sb_sw_context_t c[static const 1],
 
     return r;
 }
+#endif
 
+#if !SB_FE_ASM
+// common subexpression
+static sb_bool_t sb_sw_zscalar_validate(sb_fe_t k[static const 1],
+                      const sb_fe_t right[static 1])
+{
+    sb_word_t r = 1;
+
+    r &= SB_FE_LT(k, right); // k < n
+    sb_fe_mod_reduce(k, right); // after reduction, 0 is represented as n
+    r &= !SB_FE_EQ(k, right); // k != 0
+
+    return r;
+}
+#else
+extern sb_bool_t sb_sw_zscalar_validate(sb_fe_t k[static const 1],
+                      const sb_fe_t right[static 1]);
+#endif
 // A scalar is valid if it is reduced and not equal to zero mod N.
-static sb_word_t
+static sb_bool_t
 sb_sw_scalar_validate(sb_fe_t k[static const 1],
                       const sb_sw_curve_t s[static const 1])
 {
-    sb_word_t r = 1;
+  /*  sb_word_t r = 1;
 
     r &= sb_fe_lt(k, &s->n->p); // k < n
     sb_fe_mod_reduce(k, s->n); // after reduction, 0 is represented as n
     r &= !sb_fe_equal(k, &s->n->p); // k != 0
-
     return r;
+*/
+    return sb_sw_zscalar_validate(k, &s->n->p);
 }
 
 // A z-coordinate is valid if it is reduced and not equal to zero mod P.
-static sb_word_t
+static sb_bool_t
 sb_sw_z_validate(sb_fe_t z[static const 1],
                  const sb_sw_curve_t s[static const 1])
 {
+/*
     sb_word_t r = 1;
 
     r &= sb_fe_lt(z, &s->p->p); // k < p
     sb_fe_mod_reduce(z, s->p); // after reduction, 0 is represented as p
     r &= !sb_fe_equal(z, &s->p->p); // k != 0
-
     return r;
+*/
+    return sb_sw_zscalar_validate(z, &s->p->p);
 }
 
+// NOT USED
+#if !BOOTROM_BUILD
 static void
 sb_sw_sign_start(sb_sw_context_t g[static const 1],
                  const sb_sw_curve_t s[static const 1])
@@ -1005,17 +1562,22 @@ sb_sw_sign_start(sb_sw_context_t g[static const 1],
 
     *MULT_STATE(g) = (sb_sw_context_saved_state_t) {
         .operation = SB_SW_INCREMENTAL_OPERATION_SIGN_MESSAGE_DIGEST,
-        .curve_id = s->id
+        .curve_id = sb_sw_id_from_curve(s)
     };
 
     sb_sw_point_mult_start(g, s);
 }
+#endif
 
+#if !BOOTROM_BUILD
 static _Bool sb_sw_sign_is_finished(sb_sw_context_t g[static const 1])
 {
     return MULT_STATE(g)->stage == SB_SW_SIGN_OP_STAGE_DONE;
 }
+#endif
 
+// NOT USED
+#if !BOOTROM_BUILD
 // Places (r, s) into (x2, y2) when finished
 static sb_error_t
 sb_sw_sign_continue(sb_sw_context_t g[static const 1],
@@ -1038,7 +1600,7 @@ sb_sw_sign_continue(sb_sw_context_t g[static const 1],
 
             // If the ladder has produced (0, ±√B), then signing can't continue
             // and this is indicative of a DRBG failure.
-            err |= SB_ERROR_IF(DRBG_FAILURE, sb_fe_equal(C_X2(g), &s->n->p));
+            err |= SB_ERROR_IF(DRBG_FAILURE, SB_FE_EQ(C_X2(g), &s->n->p));
 
             sb_fe_mont_convert(C_T7(g), MULT_K(g), s->n); // t7 = k * R
             sb_fe_mod_inv_r(C_T7(g), C_T5(g), C_T6(g), s->n); // t7 = k^-1 * R
@@ -1052,7 +1614,7 @@ sb_sw_sign_continue(sb_sw_context_t g[static const 1],
             // mont_mul produces quasi-reduced output, so 0 is represented as N.
             // If signing has produced a signature with an S value of 0, this
             // indicates DRBG failure (again) and the signature is invalid.
-            err |= SB_ERROR_IF(DRBG_FAILURE, sb_fe_equal(C_Y2(g), &s->n->p));
+            err |= SB_ERROR_IF(DRBG_FAILURE, SB_FE_EQ(C_Y2(g), &s->n->p));
 
             state.stage = SB_SW_SIGN_OP_STAGE_DONE;
             *MULT_STATE(g) = state;
@@ -1066,154 +1628,137 @@ sb_sw_sign_continue(sb_sw_context_t g[static const 1],
         }
     }
 }
+#endif
 
-static void sb_sw_verify_start(sb_sw_context_t v[static const 1],
-                               const sb_sw_curve_t s[static const 1])
-{
-    *MULT_STATE(v) = (sb_sw_context_saved_state_t) {
-        .operation = SB_SW_INCREMENTAL_OPERATION_VERIFY_SIGNATURE,
-        .stage = SB_SW_VERIFY_OP_STAGE_INV_S,
-        .res = 1,
-        .curve_id = s->id
-    };
-}
-
-static _Bool sb_sw_verify_continue(sb_sw_context_t v[static const 1],
+// NOT USED (inlined)
+#if 0
+static int sb_sw_verify_continue_and_finish(sb_sw_context_t v[static const 1],
                                    const sb_sw_curve_t s[static const 1])
 {
-    sb_sw_context_saved_state_t state = *MULT_STATE(v);
+// SB_SW_VERIFY_OP_STAGE_INV_S:
+    // A signature with either r or s as 0 or N is invalid;
+    // see `sb_test_invalid_sig` for a unit test of this
+    // check.
+    if(!sb_sw_scalar_validate(VERIFY_QR(v), s)) goto err;      // state.res &= sb_sw_scalar_validate(VERIFY_QR(v), s);
+    if(!sb_sw_scalar_validate(VERIFY_QS(v), s)) goto err;      // state.res &= sb_sw_scalar_validate(VERIFY_QS(v), s);
 
-    switch (state.stage) {
-        case SB_SW_VERIFY_OP_STAGE_INV_S: {
-            // A signature with either r or s as 0 or N is invalid;
-            // see `sb_test_invalid_sig` for a unit test of this
-            // check.
-            state.res &= sb_sw_scalar_validate(VERIFY_QR(v), s);
-            state.res &= sb_sw_scalar_validate(VERIFY_QS(v), s);
-            sb_fe_mod_reduce(VERIFY_MESSAGE(v), s->n);
+    SB_FE_START(v,s)
+    SB_FE_MOD_REDUCE  (O_VERIFY_MESSAGE,1)                    // sb_fe_mod_reduce(VERIFY_MESSAGE(v), s->n);
+    SB_FE_MONT_CONVERT(O_C_T5,O_VERIFY_QS,1)                  // sb_fe_mont_convert(C_T5(v), VERIFY_QS(v), s->n); // t5 = s * R
+    SB_FE_MOD_INV_R   (O_C_T5,O_C_T6,O_C_T7,1)                // sb_fe_mod_inv_r(C_T5(v), C_T6(v), C_T7(v), s->n); // t5 = s^-1 * R
+    SB_FE_MOV         (O_C_T6,O_VERIFY_MESSAGE)               // *C_T6(v) = *VERIFY_MESSAGE(v);
+    SB_FE_MONT_MULT   (O_MULT_ADD_KG,O_C_T6,O_C_T5,1)         // sb_fe_mont_mult(MULT_ADD_KG(v), C_T6(v), C_T5(v), s->n); // k_G = m * s^-1
+    SB_FE_MONT_MULT   (O_MULT_K,O_VERIFY_QR,O_C_T5,1)         // sb_fe_mont_mult(MULT_K(v), VERIFY_QR(v), C_T5(v), s->n); // k_P = r * s^-1
+    SB_FE_STOP
 
-            // A message of zero is also invalid.
-            state.res &= !sb_fe_equal(VERIFY_MESSAGE(v), &s->n->p);
+    // A message of zero is also invalid.
+    if(SB_FE_EQ(VERIFY_MESSAGE(v), &s->n->p)) goto err;     // state.res &= !sb_fe_equal(VERIFY_MESSAGE(v), &s->n->p);
 
-            sb_fe_mont_convert(C_T5(v), VERIFY_QS(v), s->n); // t5 = s * R
-            sb_fe_mod_inv_r(C_T5(v), C_T6(v), C_T7(v), s->n); // t5 = s^-1 * R
+// SB_SW_VERIFY_OP_STAGE_INV_Z, SB_SW_VERIFY_OP_STAGE_LADDER:
+    sb_sw_point_mult_add_z_continue(v, s);
+// SB_SW_VERIFY_OP_STAGE_TEST:
+    // This happens when p is some multiple of g that occurs within
+    // the ladder, such that additions inadvertently produce a point
+    // doubling. When that occurs, the private scalar that generated p is
+    // also obvious, so this is bad news. Don't do this.
+    if(SB_FE_EQ(C_X1(v), &s->p->p) & SB_FE_EQ(C_Y1(v), &s->p->p)) goto err; // state.res &= !(sb_fe_equal(C_X1(v), &s->p->p) & sb_fe_equal(C_Y1(v), &s->p->p));
 
-            *C_T6(v) = *VERIFY_MESSAGE(v);
+    // qr ==? x mod N, but we don't have x, just x * z^2
+    // Given that qr is reduced mod N, if it is >= P - N, then it can be used
+    // directly. If it is < P - N, then we need to try to see if the original
+    // value was qr or qr + N.
 
-            sb_fe_mont_mult(MULT_ADD_KG(v), C_T6(v), C_T5(v),
-                            s->n); // k_G = m * s^-1
-            sb_fe_mont_mult(MULT_K(v), VERIFY_QR(v), C_T5(v),
-                            s->n); // k_P = r * s^-1
-
-            state.stage = SB_SW_VERIFY_OP_STAGE_INV_Z;
-            *MULT_STATE(v) = state;
-            return 0;
-        }
-        case SB_SW_VERIFY_OP_STAGE_INV_Z:
-        case SB_SW_VERIFY_OP_STAGE_LADDER: {
-            sb_sw_point_mult_add_z_continue(v, s);
-            return 0;
-        }
-        case SB_SW_VERIFY_OP_STAGE_TEST: {
-            // This happens when p is some multiple of g that occurs within
-            // the ladder, such that additions inadvertently produce a point
-            // doubling. When that occurs, the private scalar that generated p is
-            // also obvious, so this is bad news. Don't do this.
-            state.res &= !(sb_fe_equal(C_X1(v), &s->p->p) &
-                           sb_fe_equal(C_Y1(v), &s->p->p));
-
-            sb_word_t ver = 0;
-
-            // qr ==? x mod N, but we don't have x, just x * z^2
-            // Given that qr is reduced mod N, if it is >= P - N, then it can be used
-            // directly. If it is < P - N, then we need to try to see if the original
-            // value was qr or qr + N.
-
-            // Try directly first:
-            sb_fe_mont_square(C_T6(v), MULT_Z(v), s->p); // t6 = Z^2 * R
-            sb_fe_mont_mult(C_T7(v), VERIFY_QR(v), C_T6(v),
-                            s->p); // t7 = r * Z^2
-            ver |= sb_fe_equal(C_T7(v), C_X1(v));
-
-            // If that didn't work, and qr < P - N, then we need to compare
-            // (qr + N) * z^2 against x * z^2
-
-            // If qr = P - N, then we do not compare against (qr + N),
-            // because qr + N would be equal to P, and the X component of the
-            // point is thus zero and should have been rejected.
-
-            // See the small_r_signature tests, which generate signatures
-            // where this path is tested.
-
-            sb_fe_mod_add(C_T5(v), VERIFY_QR(v), &s->n->p,
-                          s->p); // t5 = (N + r)
-            sb_fe_mont_mult(C_T7(v), C_T5(v), C_T6(v),
-                            s->p); // t7 = (N + r) * Z^2
-            sb_fe_sub(C_T5(v), &s->p->p, &s->n->p); // t5 = P - N
-            ver |= (sb_fe_lt(VERIFY_QR(v), C_T5(v)) & // r < P - N
-                    sb_fe_equal(C_T7(v), C_X1(v))); // t7 == x
-
-            state.res &= ver;
-            state.stage = SB_SW_VERIFY_OP_DONE;
-            *MULT_STATE(v) = state;
-            return 1;
-        }
-        default: {
-            return state.stage == SB_SW_VERIFY_OP_DONE;
-        }
+    // Try directly first:
+    SB_FE_START(v,s)
+    SB_FE_MONT_SQUARE(O_C_T6,O_MULT_Z,0)                                 // sb_fe_mont_square(C_T6(v), MULT_Z(v), s->p); // t6 = Z^2 * R
+    SB_FE_MONT_MULT  (O_C_T7,O_VERIFY_QR,O_C_T6,0)                       // sb_fe_mont_mult(C_T7(v), VERIFY_QR(v), C_T6(v), s->p); // t7 = r * Z^2
+    SB_FE_STOP
+    if(SB_FE_EQ(C_T7(v), C_X1(v))) {
+        rc = sb_ok_true();
+        goto done;                        // ver |= sb_fe_equal(C_T7(v), C_X1(v));
     }
-}
 
-static _Bool sb_sw_verify_is_finished(sb_sw_context_t v[static const 1])
-{
-    return MULT_STATE(v)->stage == SB_SW_VERIFY_OP_DONE;
-}
+    // If that didn't work, and qr < P - N, then we need to compare
+    // (qr + N) * z^2 against x * z^2
 
+    // If qr = P - N, then we do not compare against (qr + N),
+    // because qr + N would be equal to P, and the X component of the
+    // point is thus zero and should have been rejected.
+
+    // See the small_r_signature tests, which generate signatures
+    // where this path is tested.
+
+    sb_fe_mod_add(C_T5(v), VERIFY_QR(v), &s->n->p, s->p); // t5 = (N + r)
+
+    SB_FE_START(v,s)
+    SB_FE_MONT_MULT(O_C_T7,O_C_T5,O_C_T6,0)     // sb_fe_mont_mult(C_T7(v), C_T5(v), C_T6(v), s->p);     // t7 = (N + r) * Z^2
+    SB_FE_STOP
+
+    sb_fe_sub(C_T5(v), &s->p->p, &s->n->p);               // t5 = P - N
+
+    // if((sb_fe_lt(VERIFY_QR(v), C_T5(v)) & // r < P - N
+    //          sb_fe_equal(C_T7(v), C_X1(v)))) goto sig_ok; // t7 == x
+    if((SB_FE_LO(VERIFY_QR(v), C_T5(v)) && SB_FE_EQ(C_T7(v), C_X1(v)))) {
+        rc = sb_ok_true();
+        goto done;   // ver |= (sb_fe_lt(VERIFY_QR(v), C_T5(v)) & // r < P - N
+    }
+err:
+    rc = sb_ok_false();
+done:
+#if 0 && FEATURE_CANARIES
+    canary_exit_return(SB_SW_VERIFY_CONTINUE_AND_FINISH, rc);
+#else
+    return rc;
+#endif
+}
+#endif
+
+// USED
 // Generate a Z from SB_SW_FIPS186_4_CANDIDATES worth of DRBG-produced data
 // in c->param_gen.buf. Note that this tests a fixed number of candidates, and
 // if it succeeds, there is no bias in the generated Z values.
-static sb_error_t sb_sw_z_from_buf(sb_sw_context_t ctx[static const 1],
-                                   const sb_sw_curve_t s[static const 1],
-                                   const sb_data_endian_t e)
+static sb_hard_error_t sb_sw_z_from_buf(sb_sw_context_t ctx[static const 1],
+                                   const sb_sw_curve_t s[static const 1])
 {
-    sb_error_t err = SB_SUCCESS;
-
-    sb_fe_from_bytes(MULT_Z(ctx), ctx->param_gen.buf, e);
+    sb_fe_from_bytes(MULT_Z(ctx), ctx->param_gen.buf);
 
     for (sb_size_t i = 1; i < SB_SW_FIPS186_4_CANDIDATES; i++) {
         /* Is the current candidate valid? */
-        const sb_word_t zv = sb_sw_z_validate(MULT_Z(ctx), s);
+        const sb_bool_t zv = sb_sw_z_validate(MULT_Z(ctx), s);
 
         /* Generate another candidate. */
         sb_fe_from_bytes(MULT_Z2(ctx),
-                         &ctx->param_gen.buf[i * SB_ELEM_BYTES], e);
+                         &ctx->param_gen.buf[i * SB_ELEM_BYTES]);
 
         /* If the current candidate is invalid, swap in the new candidate. */
-        sb_fe_ctswap((sb_word_t) (zv ^ SB_UWORD_C(1)), MULT_Z(ctx),
-                     MULT_Z2(ctx));
+        if (SB_FE_IS_FALSE(zv)) {
+            sb_fe_mov(MULT_Z(ctx), MULT_Z2(ctx)); // sb_fe_ctswap((sb_word_t) (zv ^ SB_UWORD_C(1)), MULT_Z(ctx), MULT_Z2(ctx));
+        } else {
+            SB_FE_ASSERT_TRUE(zv);
+        }
     }
 
     /* If this loop has not created a valid candidate, it means that the DRBG
      * has produced outputs with extremely low probability. */
-    err |= SB_ERROR_IF(DRBG_FAILURE, !sb_sw_z_validate(MULT_Z(ctx), s));
-
-    return err;
+    return SB_ERROR_IF_NOT(DRBG_FAILURE, sb_sw_z_validate(MULT_Z(ctx), s));
 }
 
 // Initial Z generation for Z blinding (Coron's third countermeasure)
-static sb_error_t sb_sw_generate_z(sb_sw_context_t c[static const 1],
+static sb_hard_error_t sb_sw_generate_z(sb_sw_context_t c[static const 1],
                                    sb_hmac_drbg_state_t* const drbg,
                                    const sb_sw_curve_t s[static const 1],
-                                   const sb_data_endian_t e,
                                    const sb_byte_t* const d1, const size_t l1,
                                    const sb_byte_t* const d2, const size_t l2,
                                    const sb_byte_t* const d3, const size_t l3,
                                    const sb_byte_t* const label,
                                    const size_t label_len)
 {
+#if !BOOTROM_BUILD
     sb_error_t err = SB_SUCCESS;
+#endif
 
     if (drbg) {
+#if !BOOTROM_BUILD
         // Use the supplied data as additional input to the DRBG
         const sb_byte_t* const add[SB_HMAC_DRBG_ADD_VECTOR_LEN] = {
             d1, d2, d3, label
@@ -1228,13 +1773,17 @@ static sb_error_t sb_sw_generate_z(sb_sw_context_t c[static const 1],
                                                     SB_SW_FIPS186_4_CANDIDATES *
                                                     SB_ELEM_BYTES,
                                                     add, add_len);
+        // It is a bug if this ever fails; the DRBG reseed count should have
+        // been checked already, and the DRBG limits should allow these inputs.
+        SB_ASSERT(!err, "Z generation should never fail.");
+#endif
     } else {
         // Initialize the HKDF with the input supplied
         sb_hkdf_extract_init(&c->param_gen.hkdf, NULL, 0);
 
-        sb_hkdf_extract_update(&c->param_gen.hkdf, d1, l1);
-        sb_hkdf_extract_update(&c->param_gen.hkdf, d2, l2);
-        sb_hkdf_extract_update(&c->param_gen.hkdf, d3, l3);
+        if (l1) sb_hkdf_extract_update(&c->param_gen.hkdf, d1, l1);
+        if (l2) sb_hkdf_extract_update(&c->param_gen.hkdf, d2, l2);
+        if (l3) sb_hkdf_extract_update(&c->param_gen.hkdf, d3, l3);
 
         sb_hkdf_extract_finish(&c->param_gen.hkdf);
 
@@ -1243,29 +1792,34 @@ static sb_error_t sb_sw_generate_z(sb_sw_context_t c[static const 1],
                        SB_SW_FIPS186_4_CANDIDATES * SB_ELEM_BYTES);
     }
 
-    // It is a bug if this ever fails; the DRBG reseed count should have
-    // been checked already, and the DRBG limits should allow these inputs.
-    SB_ASSERT(!err, "Z generation should never fail.");
+#if BOOTROM_BUILD
+    // we didn't take the drbg path above, so can't have an error from above
+    bootrom_assert(SWEETB, !drbg);
+    // Place the generated Z in MULT_Z(c) and validate it.
+    return sb_sw_z_from_buf(c, s);
+#else
 
     // Place the generated Z in MULT_Z(c) and validate it.
-    err |= sb_sw_z_from_buf(c, s, e);
+    err |= SB_ERROR_FROM_HARD_ERROR(sb_sw_z_from_buf(c, s), DRBG_FAILURE);
 
-    return err;
+    return SB_HARD_ERROR_FROM_ERROR(err);
+#endif
 }
 
 // Generate a private key from pseudo-random data filled in buf. The
 // fips186_4 parameter controls whether 1 is added to candidate values; this
 // should be true unless this function is being used for RFC6979 per-message
 // secret generation.
+#if !BOOTROM_BUILD
 static sb_error_t sb_sw_k_from_buf(sb_sw_context_t ctx[static const 1],
                                    const _Bool fips186_4,
                                    const sb_sw_curve_t* const s,
-                                   sb_data_endian_t const e)
+                                   __unused sb_data_endian_t const e)
 {
     sb_error_t err = SB_SUCCESS;
 
     // Generate the initial candidate.
-    sb_fe_from_bytes(MULT_K(ctx), ctx->param_gen.buf, e);
+    sb_fe_from_bytes(MULT_K(ctx), ctx->param_gen.buf);
 
     if (fips186_4) {
         // per FIPS 186-4 B.4.2: d = c + 1
@@ -1276,11 +1830,11 @@ static sb_error_t sb_sw_k_from_buf(sb_sw_context_t ctx[static const 1],
 
     for (sb_size_t i = 1; i < SB_SW_FIPS186_4_CANDIDATES; i++) {
         /* Is the current candidate valid? */
-        sb_word_t kv = sb_sw_scalar_validate(MULT_K(ctx), s);
+        sb_word_t kv = SB_WORD_FROM_BOOL(sb_sw_scalar_validate(MULT_K(ctx), s));
 
         /* Test another candidate. */
         sb_fe_from_bytes(MULT_Z(ctx),
-                         &ctx->param_gen.buf[i * SB_ELEM_BYTES], e);
+                         &ctx->param_gen.buf[i * SB_ELEM_BYTES]);
 
         if (fips186_4) {
             /* d = c + 1 */
@@ -1294,13 +1848,14 @@ static sb_error_t sb_sw_k_from_buf(sb_sw_context_t ctx[static const 1],
 
     /* If this loop has not created a valid candidate, it means that the DRBG
      * has produced outputs with extremely low probability. */
-    err |= SB_ERROR_IF(DRBG_FAILURE, !sb_sw_scalar_validate(MULT_K(ctx), s));
+    err |= SB_ERROR_IF(DRBG_FAILURE, !SB_WORD_FROM_BOOL(sb_sw_scalar_validate(MULT_K(ctx), s)));
 
     return err;
 }
-
+#endif
 //// PUBLIC API:
 
+#if !BOOTROM_BUILD
 /// FIPS 186-4-style private key generation. Note that this tests a fixed
 /// number of candidates.
 sb_error_t sb_sw_generate_private_key(sb_sw_context_t ctx[static const 1],
@@ -1341,12 +1896,14 @@ sb_error_t sb_sw_generate_private_key(sb_sw_context_t ctx[static const 1],
     /* Test and select a candidate from the filled buffer. */
     err |= sb_sw_k_from_buf(ctx, 1, s, e);
 
-    sb_fe_to_bytes(private->bytes, MULT_K(ctx), e);
+    sb_fe_to_bytes(private->bytes, MULT_K(ctx));
 
     SB_RETURN(err, ctx);
 }
+#endif
 
 // Private key generation from HKDF expansion.
+#if !BOOTROM_BUILD
 sb_error_t sb_sw_hkdf_expand_private_key(sb_sw_context_t ctx[static const 1],
                                          sb_sw_private_t private[static const 1],
                                          sb_hkdf_state_t hkdf[static const 1],
@@ -1375,10 +1932,11 @@ sb_error_t sb_sw_hkdf_expand_private_key(sb_sw_context_t ctx[static const 1],
     /* Test and select a candidate from the filled buffer. */
     err |= sb_sw_k_from_buf(ctx, 1, s, e);
 
-    sb_fe_to_bytes(private->bytes, MULT_K(ctx), e);
+    sb_fe_to_bytes(private->bytes, MULT_K(ctx));
 
     SB_RETURN(err, ctx);
 }
+#endif
 
 // Helper function for sb_sw_invert_private_key and
 // sb_sw_composite_sign_wrap_message_digest.
@@ -1386,6 +1944,7 @@ sb_error_t sb_sw_hkdf_expand_private_key(sb_sw_context_t ctx[static const 1],
 // generated blinding factor stored in MULT_K in the montgomery domain and
 // stores the result in C_T6. Assumes that curve and field element have both
 // already been validated.
+#if !BOOTROM_BUILD
 static void sb_sw_invert_field_element
                  (sb_sw_context_t ctx[static const 1],
                   const sb_sw_curve_t* s)
@@ -1408,7 +1967,9 @@ static void sb_sw_invert_field_element
     //    = scalar^-1 * R
     sb_fe_mont_mult(C_T6(ctx), C_T5(ctx), C_X1(ctx), s->n);
 }
+#endif
 
+#if !BOOTROM_BUILD
 sb_error_t sb_sw_invert_private_key(sb_sw_context_t ctx[static const 1],
                                     sb_sw_private_t output[static const 1],
                                     const sb_sw_private_t private[static const 1],
@@ -1470,9 +2031,9 @@ sb_error_t sb_sw_invert_private_key(sb_sw_context_t ctx[static const 1],
     /* At this point a possibly-invalid candidate is in MULT_K(ctx). */
     /* Check the supplied private key now. */
 
-    sb_fe_from_bytes(MULT_Z(ctx), private->bytes, e);
+    sb_fe_from_bytes(MULT_Z(ctx), private->bytes);
     err |= SB_ERROR_IF(PRIVATE_KEY_INVALID,
-                       !sb_sw_scalar_validate(MULT_Z(ctx), s));
+                       !SB_WORD_FROM_BOOL(sb_sw_scalar_validate(MULT_Z(ctx), s)));
 
     /* Bail out if the private key is invalid or if blinding factor
      * generation failed. */
@@ -1484,17 +2045,20 @@ sb_error_t sb_sw_invert_private_key(sb_sw_context_t ctx[static const 1],
     // T5 = scalar^-1
     sb_fe_mont_reduce(C_T5(ctx), C_T6(ctx), s->n);
 
-    sb_fe_to_bytes(output->bytes, C_T5(ctx), e);
+    sb_fe_to_bytes(output->bytes, C_T5(ctx));
 
     SB_RETURN(err, ctx);
 }
+#endif
 
+// NOT USED
+#if !BOOTROM_BUILD
 sb_error_t sb_sw_compute_public_key_start
     (sb_sw_context_t ctx[static const 1],
      const sb_sw_private_t private[static const 1],
      sb_hmac_drbg_state_t* const drbg,
      const sb_sw_curve_id_t curve,
-     const sb_data_endian_t e)
+     __unused const sb_data_endian_t e)
 {
     sb_error_t err = SB_SUCCESS;
 
@@ -1514,14 +2078,14 @@ sb_error_t sb_sw_compute_public_key_start
 
     // Generate a Z for projective coordinate randomization.
     static const sb_byte_t label[] = "sb_sw_compute_public_key";
-    err |= sb_sw_generate_z(ctx, drbg, s, e, private->bytes, SB_ELEM_BYTES,
-                            NULL, 0, NULL, 0, label, sizeof(label));
+    err |= SB_ERROR_FROM_HARD_ERROR(sb_sw_generate_z(ctx, drbg, s, private->bytes, SB_ELEM_BYTES,
+                            NULL, 0, NULL, 0, label, sizeof(label)), DRBG_FAILURE);
 
     // Validate the private key before performing any operations.
 
-    sb_fe_from_bytes(MULT_K(ctx), private->bytes, e);
+    sb_fe_from_bytes(MULT_K(ctx), private->bytes);
     err |= SB_ERROR_IF(PRIVATE_KEY_INVALID,
-                       !sb_sw_scalar_validate(MULT_K(ctx), s));
+                       !SB_WORD_FROM_BOOL(sb_sw_scalar_validate(MULT_K(ctx), s)));
 
     // Return DRBG failure and invalid private key errors before performing
     // the point multiplication.
@@ -1532,14 +2096,17 @@ sb_error_t sb_sw_compute_public_key_start
     *MULT_STATE(ctx) =
         (sb_sw_context_saved_state_t) {
             .operation = SB_SW_INCREMENTAL_OPERATION_COMPUTE_PUBLIC_KEY,
-            .curve_id = s->id
+            .curve_id = sb_sw_id_from_curve(s)
         };
 
     sb_sw_point_mult_start(ctx, s);
 
     return err;
 }
+#endif
 
+// NOT USED
+#if !BOOTROM_BUILD
 sb_error_t sb_sw_compute_public_key_continue
     (sb_sw_context_t ctx[static const 1],
      _Bool done[static const 1])
@@ -1560,11 +2127,14 @@ sb_error_t sb_sw_compute_public_key_continue
 
     return err;
 }
+#endif
 
+// NOT USED
+#if !BOOTROM_BUILD
 sb_error_t sb_sw_compute_public_key_finish
     (sb_sw_context_t ctx[static const 1],
      sb_sw_public_t public[static const 1],
-     const sb_data_endian_t e)
+     __unused const sb_data_endian_t e)
 {
     sb_error_t err = SB_SUCCESS;
 
@@ -1588,17 +2158,20 @@ sb_error_t sb_sw_compute_public_key_finish
     // The output is quasi-reduced, so the point at infinity is (p, p).
     // This should never occur with valid scalars.
     err |= SB_ERROR_IF(PRIVATE_KEY_INVALID,
-                       (sb_fe_equal(C_X1(ctx), &s->p->p) &
-                        sb_fe_equal(C_Y1(ctx), &s->p->p)));
+                       (SB_FE_EQ(C_X1(ctx), &s->p->p) &
+                        SB_FE_EQ(C_Y1(ctx), &s->p->p)));
     SB_ASSERT(!err, "Montgomery ladder produced the point at infinity from a "
                     "valid scalar.");
 
-    sb_fe_to_bytes(public->bytes, C_X1(ctx), e);
-    sb_fe_to_bytes(public->bytes + SB_ELEM_BYTES, C_Y1(ctx), e);
+    sb_fe_to_bytes(public->bytes, C_X1(ctx));
+    sb_fe_to_bytes(public->bytes + SB_ELEM_BYTES, C_Y1(ctx));
 
     SB_RETURN(err, ctx);
 }
+#endif
 
+// NOT USED
+#if !BOOTROM_BUILD
 sb_error_t sb_sw_compute_public_key(sb_sw_context_t ctx[static const 1],
                                     sb_sw_public_t public[static const 1],
                                     const sb_sw_private_t private[static const 1],
@@ -1621,11 +2194,14 @@ sb_error_t sb_sw_compute_public_key(sb_sw_context_t ctx[static const 1],
 
     SB_RETURN(err, ctx);
 }
+#endif
 
+// NOT USED
+#if !BOOTROM_BUILD
 sb_error_t sb_sw_valid_private_key(sb_sw_context_t ctx[static const 1],
                                    const sb_sw_private_t private[static const 1],
                                    const sb_sw_curve_id_t curve,
-                                   const sb_data_endian_t e)
+                                   __unused const sb_data_endian_t e)
 {
     sb_error_t err = SB_SUCCESS;
 
@@ -1636,18 +2212,21 @@ sb_error_t sb_sw_valid_private_key(sb_sw_context_t ctx[static const 1],
 
     SB_RETURN_ERRORS(err, ctx);
 
-    sb_fe_from_bytes(MULT_K(ctx), private->bytes, e);
+    sb_fe_from_bytes(MULT_K(ctx), private->bytes);
 
     err |= SB_ERROR_IF(PRIVATE_KEY_INVALID,
-                       !sb_sw_scalar_validate(MULT_K(ctx), s));
+                       !SB_WORD_FROM_BOOL(sb_sw_scalar_validate(MULT_K(ctx), s)));
 
     SB_RETURN(err, ctx);
 }
+#endif
 
+// NOT USED
+#if !BOOTROM_BUILD
 sb_error_t sb_sw_valid_public_key(sb_sw_context_t ctx[static const 1],
                                   const sb_sw_public_t public[static const 1],
                                   const sb_sw_curve_id_t curve,
-                                  const sb_data_endian_t e)
+                                  __unused const sb_data_endian_t e)
 {
     sb_error_t err = SB_SUCCESS;
 
@@ -1658,20 +2237,23 @@ sb_error_t sb_sw_valid_public_key(sb_sw_context_t ctx[static const 1],
 
     SB_RETURN_ERRORS(err, ctx);
 
-    sb_fe_from_bytes(MULT_POINT_X(ctx), public->bytes, e);
-    sb_fe_from_bytes(MULT_POINT_Y(ctx), public->bytes + SB_ELEM_BYTES, e);
+    sb_fe_from_bytes(MULT_POINT_X(ctx), public->bytes);
+    sb_fe_from_bytes(MULT_POINT_Y(ctx), public->bytes + SB_ELEM_BYTES);
 
-    err |= SB_ERROR_IF(PUBLIC_KEY_INVALID, !sb_sw_point_validate(ctx, s));
+    err |= SB_ERROR_IF(PUBLIC_KEY_INVALID, !SB_WORD_FROM_BOOL(sb_sw_point_validate(ctx, s)));
 
     SB_RETURN(err, ctx);
 }
+#endif
 
+// NOT USED
+#if !BOOTROM_BUILD
 sb_error_t sb_sw_compress_public_key(sb_sw_context_t ctx[static const 1],
                                      sb_sw_compressed_t compressed[static const 1],
                                      _Bool sign[static const 1],
                                      const sb_sw_public_t public[static const 1],
                                      sb_sw_curve_id_t curve,
-                                     sb_data_endian_t e)
+                                     __unused sb_data_endian_t e)
 {
     sb_error_t err = SB_SUCCESS;
 
@@ -1685,10 +2267,10 @@ sb_error_t sb_sw_compress_public_key(sb_sw_context_t ctx[static const 1],
 
     SB_RETURN_ERRORS(err, ctx);
 
-    sb_fe_from_bytes(MULT_POINT_X(ctx), public->bytes, e);
-    sb_fe_from_bytes(MULT_POINT_Y(ctx), public->bytes + SB_ELEM_BYTES, e);
+    sb_fe_from_bytes(MULT_POINT_X(ctx), public->bytes);
+    sb_fe_from_bytes(MULT_POINT_Y(ctx), public->bytes + SB_ELEM_BYTES);
 
-    err |= SB_ERROR_IF(PUBLIC_KEY_INVALID, !sb_sw_point_validate(ctx, s));
+    err |= SB_ERROR_IF(PUBLIC_KEY_INVALID, !SB_WORD_FROM_BOOL(sb_sw_point_validate(ctx, s)));
 
     SB_RETURN_ERRORS(err, ctx);
 
@@ -1701,14 +2283,17 @@ sb_error_t sb_sw_compress_public_key(sb_sw_context_t ctx[static const 1],
 
     SB_RETURN(err, ctx);
 }
+#endif
 
+// NOT USED
+#if !BOOTROM_BUILD
 sb_error_t sb_sw_decompress_public_key
     (sb_sw_context_t ctx[static const 1],
      sb_sw_public_t public[static const 1],
      const sb_sw_compressed_t compressed[static const 1],
      _Bool sign,
      sb_sw_curve_id_t curve,
-     sb_data_endian_t e)
+     __unused sb_data_endian_t e)
 {
     sb_error_t err = SB_SUCCESS;
 
@@ -1721,24 +2306,27 @@ sb_error_t sb_sw_decompress_public_key
 
     SB_RETURN_ERRORS(err, ctx);
 
-    sb_fe_from_bytes(MULT_POINT_X(ctx), compressed->bytes, e);
+    sb_fe_from_bytes(MULT_POINT_X(ctx), compressed->bytes);
     err |= SB_ERROR_IF(PUBLIC_KEY_INVALID,
                        !sb_sw_point_decompress(ctx, (sb_word_t) sign, s));
     SB_RETURN_ERRORS(err, ctx);
 
-    sb_fe_to_bytes(public->bytes, MULT_POINT_X(ctx), e);
-    sb_fe_to_bytes(public->bytes + SB_ELEM_BYTES, MULT_POINT_Y(ctx), e);
+    sb_fe_to_bytes(public->bytes, MULT_POINT_X(ctx));
+    sb_fe_to_bytes(public->bytes + SB_ELEM_BYTES, MULT_POINT_Y(ctx));
 
     SB_RETURN(err, ctx);
 }
+#endif
 
+// NOT USED
+#if !BOOTROM_BUILD
 static sb_error_t sb_sw_multiply_shared_start
     (sb_sw_context_t ctx[static const 1],
      const sb_sw_private_t private[static const 1],
      const sb_sw_public_t public[static const 1],
      sb_hmac_drbg_state_t* const drbg,
      const sb_sw_curve_id_t curve,
-     const sb_data_endian_t e,
+     __unused const sb_data_endian_t e,
      const sb_sw_incremental_operation_t op)
 {
     sb_error_t err = SB_SUCCESS;
@@ -1758,18 +2346,18 @@ static sb_error_t sb_sw_multiply_shared_start
     // Only the X coordinate of the public key is used as the nonce, since
     // the Y coordinate is not an independent input.
     static const sb_byte_t label[] = "sb_sw_multiply_shared";
-    err |= sb_sw_generate_z(ctx, drbg, s, e, private->bytes, SB_ELEM_BYTES,
+    err |= SB_ERROR_FROM_HARD_ERROR(sb_sw_generate_z(ctx, drbg, s, private->bytes, SB_ELEM_BYTES,
                             public->bytes, SB_ELEM_BYTES,
-                            NULL, 0, label, sizeof(label));
+                            NULL, 0, label, sizeof(label)), DRBG_FAILURE);
 
-    sb_fe_from_bytes(MULT_K(ctx), private->bytes, e);
+    sb_fe_from_bytes(MULT_K(ctx), private->bytes);
 
-    sb_fe_from_bytes(MULT_POINT_X(ctx), public->bytes, e);
-    sb_fe_from_bytes(MULT_POINT_Y(ctx), public->bytes + SB_ELEM_BYTES, e);
+    sb_fe_from_bytes(MULT_POINT_X(ctx), public->bytes);
+    sb_fe_from_bytes(MULT_POINT_Y(ctx), public->bytes + SB_ELEM_BYTES);
 
     err |= SB_ERROR_IF(PRIVATE_KEY_INVALID,
-                       !sb_sw_scalar_validate(MULT_K(ctx), s));
-    err |= SB_ERROR_IF(PUBLIC_KEY_INVALID, !sb_sw_point_validate(ctx, s));
+                       !SB_WORD_FROM_BOOL(sb_sw_scalar_validate(MULT_K(ctx), s)));
+    err |= SB_ERROR_IF(PUBLIC_KEY_INVALID, !SB_WORD_FROM_BOOL(sb_sw_point_validate(ctx, s)));
 
     // Return early if the supplied public key does not represent a point on
     // the given curve.
@@ -1785,14 +2373,17 @@ static sb_error_t sb_sw_multiply_shared_start
 
     *MULT_STATE(ctx) = (sb_sw_context_saved_state_t) {
         .operation = op,
-        .curve_id = s->id
+        .curve_id = sb_sw_id_from_curve(s)
     };
 
     sb_sw_point_mult_start(ctx, s);
 
     return err;
 }
+#endif
 
+// NOT USED
+#if !BOOTROM_BUILD
 sb_error_t sb_sw_shared_secret_start
     (sb_sw_context_t ctx[static const 1],
      const sb_sw_private_t private[static const 1],
@@ -1811,7 +2402,10 @@ sb_error_t sb_sw_shared_secret_start
 
     return err;
 }
+#endif
 
+// NOT USED
+#if !BOOTROM_BUILD
 sb_error_t sb_sw_shared_secret_continue
     (sb_sw_context_t ctx[static const 1],
      _Bool done[static const 1])
@@ -1831,10 +2425,13 @@ sb_error_t sb_sw_shared_secret_continue
 
     return err;
 }
+#endif
 
+// NOT USED
+#if !BOOTROM_BUILD
 sb_error_t sb_sw_shared_secret_finish(sb_sw_context_t ctx[static const 1],
                                       sb_sw_shared_secret_t secret[static const 1],
-                                      const sb_data_endian_t e)
+                                      __unused const sb_data_endian_t e)
 {
     sb_error_t err = SB_SUCCESS;
     const sb_sw_curve_t* s = NULL;
@@ -1856,17 +2453,20 @@ sb_error_t sb_sw_shared_secret_finish(sb_sw_context_t ctx[static const 1],
 
     // This should never occur with a valid private scalar.
     err |= SB_ERROR_IF(PRIVATE_KEY_INVALID,
-                       (sb_fe_equal(C_X1(ctx), &s->p->p) &
-                        sb_fe_equal(C_Y1(ctx), &s->p->p)));
+                       (SB_FE_EQ(C_X1(ctx), &s->p->p) &
+                        SB_FE_EQ(C_Y1(ctx), &s->p->p)));
     SB_ASSERT(!err, "Montgomery ladder produced the point at infinity from a "
                     "valid scalar.");
 
 
-    sb_fe_to_bytes(secret->bytes, C_X1(ctx), e);
+    sb_fe_to_bytes(secret->bytes, C_X1(ctx));
 
     SB_RETURN(err, ctx);
 }
+#endif
 
+// NOT USED
+#if !BOOTROM_BUILD
 sb_error_t sb_sw_shared_secret(sb_sw_context_t ctx[static const 1],
                                sb_sw_shared_secret_t secret[static const 1],
                                const sb_sw_private_t private[static const 1],
@@ -1890,8 +2490,10 @@ sb_error_t sb_sw_shared_secret(sb_sw_context_t ctx[static const 1],
 
     SB_RETURN(err, ctx);
 }
+#endif
 
-
+// NOT USED
+#if !BOOTROM_BUILD
 sb_error_t sb_sw_point_multiply_start
     (sb_sw_context_t ctx[static const 1],
      const sb_sw_private_t private[static const 1],
@@ -1910,7 +2512,10 @@ sb_error_t sb_sw_point_multiply_start
 
     return err;
 }
+#endif
 
+// NOT USED
+#if !BOOTROM_BUILD
 sb_error_t sb_sw_point_multiply_continue
     (sb_sw_context_t ctx[static const 1],
      _Bool done[static const 1])
@@ -1930,10 +2535,12 @@ sb_error_t sb_sw_point_multiply_continue
 
     return err;
 }
-
+#endif
+// NOT USED
+#if !BOOTROM_BUILD
 sb_error_t sb_sw_point_multiply_finish(sb_sw_context_t ctx[static const 1],
                                        sb_sw_public_t output[static const 1],
-                                       const sb_data_endian_t e)
+                                       __unused const sb_data_endian_t e)
 {
     sb_error_t err = SB_SUCCESS;
     const sb_sw_curve_t* s = NULL;
@@ -1955,17 +2562,20 @@ sb_error_t sb_sw_point_multiply_finish(sb_sw_context_t ctx[static const 1],
 
     // This should never occur with a valid private scalar.
     err |= SB_ERROR_IF(PRIVATE_KEY_INVALID,
-                       (sb_fe_equal(C_X1(ctx), &s->p->p) &
-                        sb_fe_equal(C_Y1(ctx), &s->p->p)));
+                       (SB_FE_EQ(C_X1(ctx), &s->p->p) &
+                        SB_FE_EQ(C_Y1(ctx), &s->p->p)));
     SB_ASSERT(!err, "Montgomery ladder produced the point at infinity from a "
                     "valid scalar.");
 
-    sb_fe_to_bytes(output->bytes, C_X1(ctx), e);
-    sb_fe_to_bytes(output->bytes + SB_ELEM_BYTES, C_Y1(ctx), e);
+    sb_fe_to_bytes(output->bytes, C_X1(ctx));
+    sb_fe_to_bytes(output->bytes + SB_ELEM_BYTES, C_Y1(ctx));
 
     SB_RETURN(err, ctx);
 }
+#endif
 
+// NOT USED
+#if !BOOTROM_BUILD
 sb_error_t sb_sw_point_multiply(sb_sw_context_t ctx[static const 1],
                                 sb_sw_public_t output[static const 1],
                                 const sb_sw_private_t private[static const 1],
@@ -1989,7 +2599,10 @@ sb_error_t sb_sw_point_multiply(sb_sw_context_t ctx[static const 1],
 
     SB_RETURN(err, ctx);
 }
+#endif
 
+// NOT USED
+#if !BOOTROM_BUILD
 // Shared message-signing logic; used for normal signing and known-answer test
 // cases where the per-message secret is supplied. Assumes that the
 // per-message secret and random Z value have already been generated in the
@@ -1999,17 +2612,17 @@ static sb_error_t sb_sw_sign_message_digest_shared_start
      const sb_sw_private_t private[static const 1],
      const sb_sw_message_digest_t message[static const 1],
      const sb_sw_curve_t s[static const 1],
-     const sb_data_endian_t e)
+     __unused const sb_data_endian_t e)
 {
     sb_error_t err = SB_SUCCESS;
 
     // Validate the private scalar and message.
 
-    sb_fe_from_bytes(SIGN_PRIVATE(ctx), private->bytes, e);
-    sb_fe_from_bytes(SIGN_MESSAGE(ctx), message->bytes, e);
+    sb_fe_from_bytes(SIGN_PRIVATE(ctx), private->bytes);
+    sb_fe_from_bytes(SIGN_MESSAGE(ctx), message->bytes);
 
     err |= SB_ERROR_IF(PRIVATE_KEY_INVALID,
-                       !sb_sw_scalar_validate(SIGN_PRIVATE(ctx), s));
+                       !SB_WORD_FROM_BOOL(sb_sw_scalar_validate(SIGN_PRIVATE(ctx), s)));
 
     // Reduce the message modulo N
     sb_fe_mod_reduce(SIGN_MESSAGE(ctx), s->n);
@@ -2021,6 +2634,7 @@ static sb_error_t sb_sw_sign_message_digest_shared_start
 
     return err;
 }
+#endif
 
 #ifdef SB_TEST
 
@@ -2028,6 +2642,7 @@ static sb_error_t sb_sw_sign_message_digest_shared_start
 // header. Do not under any circumstances call this function unless you are
 // running NIST CAVP tests.
 
+// NOT USED
 sb_error_t sb_sw_sign_message_digest_with_k_beware_of_the_leopard
     (sb_sw_context_t ctx[static const 1],
      sb_sw_signature_t signature[static const 1],
@@ -2049,19 +2664,20 @@ sb_error_t sb_sw_sign_message_digest_with_k_beware_of_the_leopard
     // Return early if the supplied curve is invalid.
     SB_RETURN_ERRORS(err, ctx);
 
-    sb_fe_from_bytes(MULT_K(ctx), k->bytes, SB_ELEM_BYTES);
+    // was: sb_fe_from_bytes(MULT_K(ctx), k->bytes, SB_ELEM_BYTES); but surely last parameter is endianity?!
+    sb_fe_from_bytes(MULT_K(ctx), k->bytes);
 
     // Validate the supplied scalar.
     err |= SB_ERROR_IF(PRIVATE_KEY_INVALID,
-                       !sb_sw_scalar_validate(MULT_K(ctx), s));
+                       !SB_WORD_FROM_BOOL(sb_sw_scalar_validate(MULT_K(ctx), s)));
 
     // Generate a Z value for blinding.
     static const sb_byte_t label[] =
         "sb_sw_sign_message_digest_with_k_beware_of_the_leopard";
 
-    err |= sb_sw_generate_z(ctx, NULL, s, e, private->bytes, SB_ELEM_BYTES,
+    err |= SB_ERROR_FROM_HARD_ERROR(sb_sw_generate_z(ctx, NULL, s, private->bytes, SB_ELEM_BYTES,
                             message->bytes, SB_ELEM_BYTES, NULL, 0, label,
-                            sizeof(label));
+                            sizeof(label)), DRBG_FAILURE);
 
     // Return if the supplied scalar is invalid or Z generation failed.
     SB_RETURN_ERRORS(err, ctx);
@@ -2074,8 +2690,8 @@ sb_error_t sb_sw_sign_message_digest_with_k_beware_of_the_leopard
         SB_RETURN_ERRORS(err, ctx);
     } while (!done);
 
-    sb_fe_to_bytes(signature->bytes, C_X2(ctx), e);
-    sb_fe_to_bytes(signature->bytes + SB_ELEM_BYTES, C_Y2(ctx), e);
+    sb_fe_to_bytes(signature->bytes, C_X2(ctx));
+    sb_fe_to_bytes(signature->bytes + SB_ELEM_BYTES, C_Y2(ctx));
 
     SB_RETURN(err, ctx);
 
@@ -2083,6 +2699,8 @@ sb_error_t sb_sw_sign_message_digest_with_k_beware_of_the_leopard
 
 #endif
 
+// NOT USED
+#if !BOOTROM_BUILD
 sb_error_t sb_sw_sign_message_digest_start
     (sb_sw_context_t ctx[static const 1],
      const sb_sw_private_t private[static const 1],
@@ -2149,18 +2767,16 @@ sb_error_t sb_sw_sign_message_digest_start
     } else {
         // RFC6979 deterministic signature generation requires the scalar and
         // reduced message to be input to the DRBG in big-endian form.
-        sb_fe_from_bytes(MULT_K(ctx), private->bytes, e);
-        sb_fe_from_bytes(MULT_Z(ctx), message->bytes, e);
+        sb_fe_from_bytes(MULT_K(ctx), private->bytes);
+        sb_fe_from_bytes(MULT_Z(ctx), message->bytes);
 
         // Reduce the message modulo N. Unreduced scalars will be tested later.
         sb_fe_mod_reduce(MULT_Z(ctx), s->n);
 
         // Convert the private scalar and reduced message back into a
         // big-endian byte string
-        sb_fe_to_bytes(&ctx->param_gen.buf[0], MULT_K(ctx),
-                       SB_DATA_ENDIAN_BIG);
-        sb_fe_to_bytes(&ctx->param_gen.buf[SB_ELEM_BYTES], MULT_Z(ctx),
-                       SB_DATA_ENDIAN_BIG);
+        sb_fe_to_bytes(&ctx->param_gen.buf[0], MULT_K(ctx));
+        sb_fe_to_bytes(&ctx->param_gen.buf[SB_ELEM_BYTES], MULT_Z(ctx));
 
         err |=
             sb_hmac_drbg_init(&ctx->param_gen.drbg,
@@ -2204,7 +2820,7 @@ sb_error_t sb_sw_sign_message_digest_start
         SB_NULLIFY(&ctx->param_gen.drbg);
     }
 
-    err |= sb_sw_z_from_buf(ctx, s, e);
+    err |= SB_ERROR_FROM_HARD_ERROR(sb_sw_z_from_buf(ctx, s), DRBG_FAILURE);
 
     // If the DRBG has failed again, bail out early.
     SB_RETURN_ERRORS(err, ctx);
@@ -2213,11 +2829,15 @@ sb_error_t sb_sw_sign_message_digest_start
     // start the message signing.
     return sb_sw_sign_message_digest_shared_start(ctx, private, message, s, e);
 }
+#endif
 
 // Implemented in sb_sha256.c for sha256 message verification.
 extern void
 sb_sha256_finish_to_buffer(sb_sha256_state_t sha[static restrict 1]);
 
+// NOT USED
+#if !BOOTROM_BUILD
+#if !SB_USE_RP2350_SHA256 // no sb_sha256_finish_to_buffer
 sb_error_t sb_sw_sign_message_sha256_start
     (sb_sw_context_t ctx[static const 1],
      sb_sha256_state_t sha[static const 1],
@@ -2236,7 +2856,11 @@ sb_error_t sb_sw_sign_message_sha256_start
     return sb_sw_sign_message_digest_start(ctx, private, digest,
                                            provided_drbg, curve, e);
 }
+#endif
+#endif
 
+// NOT USED
+#if !BOOTROM_BUILD
 sb_error_t sb_sw_sign_message_digest_continue
     (sb_sw_context_t ctx[static const 1],
      _Bool done[static const 1])
@@ -2257,11 +2881,14 @@ sb_error_t sb_sw_sign_message_digest_continue
 
     return err;
 }
+#endif
 
+// NOT USED
+#if !BOOTROM_BUILD
 sb_error_t sb_sw_sign_message_digest_finish
     (sb_sw_context_t ctx[static const 1],
      sb_sw_signature_t signature[static const 1],
-     const sb_data_endian_t e)
+     __unused const sb_data_endian_t e)
 {
     sb_error_t err = SB_SUCCESS;
 
@@ -2278,12 +2905,15 @@ sb_error_t sb_sw_sign_message_digest_finish
 
     SB_RETURN_ERRORS(err, ctx);
 
-    sb_fe_to_bytes(signature->bytes, C_X2(ctx), e);
-    sb_fe_to_bytes(signature->bytes + SB_ELEM_BYTES, C_Y2(ctx), e);
+    sb_fe_to_bytes(signature->bytes, C_X2(ctx));
+    sb_fe_to_bytes(signature->bytes + SB_ELEM_BYTES, C_Y2(ctx));
 
     SB_RETURN(err, ctx);
 }
+#endif
 
+// NOT USED
+#if !BOOTROM_BUILD
 sb_error_t sb_sw_sign_message_digest
     (sb_sw_context_t ctx[static const 1],
      sb_sw_signature_t signature[static const 1],
@@ -2309,7 +2939,10 @@ sb_error_t sb_sw_sign_message_digest
 
     SB_RETURN(err, ctx);
 }
+#endif
 
+// NOT USED
+#if !BOOTROM_BUILD
 sb_error_t sb_sw_sign_message_sha256
     (sb_sw_context_t ctx[static const 1],
      sb_sw_message_digest_t digest[static const 1],
@@ -2327,7 +2960,10 @@ sb_error_t sb_sw_sign_message_sha256
     return sb_sw_sign_message_digest(ctx, signature, private, digest,
                                      provided_drbg, curve, e);
 }
+#endif
 
+// NOT USED
+#if !BOOTROM_BUILD
 sb_error_t sb_sw_composite_sign_wrap_message_digest
     (sb_sw_context_t ctx[static const 1],
      sb_sw_message_digest_t wrapped[static const 1],
@@ -2397,9 +3033,9 @@ sb_error_t sb_sw_composite_sign_wrap_message_digest
     /* At this point a possibly-invalid candidate is in MULT_K(ctx). */
     /* Check the supplied private key now. */
 
-    sb_fe_from_bytes(MULT_Z(ctx), private->bytes, e);
+    sb_fe_from_bytes(MULT_Z(ctx), private->bytes);
     err |= SB_ERROR_IF(PRIVATE_KEY_INVALID,
-                       !sb_sw_scalar_validate(MULT_Z(ctx), s));
+                       !SB_WORD_FROM_BOOL(sb_sw_scalar_validate(MULT_Z(ctx), s)));
 
     /* Bail out if the private key is invalid or if blinding factor
      * generation failed. */
@@ -2409,25 +3045,28 @@ sb_error_t sb_sw_composite_sign_wrap_message_digest
     sb_sw_invert_field_element(ctx, s);
 
     // T5 = message_digest
-    sb_fe_from_bytes(C_T5(ctx), message->bytes, e);
+    sb_fe_from_bytes(C_T5(ctx), message->bytes);
     sb_fe_mod_reduce(C_T5(ctx), s->n);
 
     // T7 = (scalar^-1 * R) * message_digest * R^-1
     //    = scalar^-1 * message_digest
     sb_fe_mont_mult(C_T7(ctx), C_T6(ctx), C_T5(ctx), s->n);
 
-    sb_fe_to_bytes(wrapped->bytes, C_T7(ctx), e);
+    sb_fe_to_bytes(wrapped->bytes, C_T7(ctx));
 
     SB_RETURN(err, ctx);
 }
+#endif
 
+// NOT USED
+#if !BOOTROM_BUILD
 sb_error_t sb_sw_composite_sign_unwrap_signature
     (sb_sw_context_t ctx[static const 1],
      sb_sw_signature_t unwrapped[static const 1],
      const sb_sw_signature_t signature[static const 1],
      const sb_sw_private_t private[static const 1],
      sb_sw_curve_id_t const curve,
-     sb_data_endian_t const e)
+     __unused sb_data_endian_t const e)
 {
     sb_error_t err = SB_SUCCESS;
 
@@ -2442,19 +3081,19 @@ sb_error_t sb_sw_composite_sign_unwrap_signature
     SB_RETURN_ERRORS(err, ctx);
 
     // Convert the private scalar to a field element and validate.
-    sb_fe_from_bytes(MULT_Z(ctx), private->bytes, e);
+    sb_fe_from_bytes(MULT_Z(ctx), private->bytes);
     err |= SB_ERROR_IF(PRIVATE_KEY_INVALID,
-                       !sb_sw_scalar_validate(MULT_Z(ctx), s));
+                       !SB_WORD_FROM_BOOL(sb_sw_scalar_validate(MULT_Z(ctx), s)));
 
     // Convert the signature to field elements and validate.
-    sb_fe_from_bytes(VERIFY_QR(ctx), signature->bytes, e);
-    sb_fe_from_bytes(VERIFY_QS(ctx), signature->bytes + SB_ELEM_BYTES, e);
+    sb_fe_from_bytes(VERIFY_QR(ctx), signature->bytes);
+    sb_fe_from_bytes(VERIFY_QS(ctx), signature->bytes + SB_ELEM_BYTES);
     sb_fe_mod_reduce(C_T6(ctx), s->n);
 
     err |= SB_ERROR_IF(SIGNATURE_INVALID,
-                       !sb_sw_scalar_validate(VERIFY_QR(ctx), s));
+                       !SB_WORD_FROM_BOOL(sb_sw_scalar_validate(VERIFY_QR(ctx), s)));
     err |= SB_ERROR_IF(SIGNATURE_INVALID,
-                       !sb_sw_scalar_validate(VERIFY_QS(ctx), s));
+                       !SB_WORD_FROM_BOOL(sb_sw_scalar_validate(VERIFY_QS(ctx), s)));
 
     // Return with errors if private key or signature did not validate.
     SB_RETURN_ERRORS(err, ctx);
@@ -2466,28 +3105,27 @@ sb_error_t sb_sw_composite_sign_unwrap_signature
     sb_fe_mont_mult(C_T5(ctx), C_Y1(ctx), VERIFY_QS(ctx), s->n);
 
     // Output (r, s)
-    sb_fe_to_bytes(unwrapped->bytes, VERIFY_QR(ctx), e);
-    sb_fe_to_bytes(unwrapped->bytes + SB_ELEM_BYTES, C_T5(ctx), e);
+    sb_fe_to_bytes(unwrapped->bytes, VERIFY_QR(ctx));
+    sb_fe_to_bytes(unwrapped->bytes + SB_ELEM_BYTES, C_T5(ctx));
 
     SB_RETURN(err, ctx);
 }
+#endif
 
-sb_error_t sb_sw_verify_signature_start
+// NOT USED (inlined)
+#if 0
+static sb_error_t sb_sw_verify_signature_start
     (sb_sw_context_t ctx[static const 1],
      const sb_sw_signature_t signature[static const 1],
      const sb_sw_public_t public[static const 1],
      const sb_sw_message_digest_t message[static const 1],
      sb_hmac_drbg_state_t* const drbg,
-     const sb_sw_curve_id_t curve,
-     const sb_data_endian_t e)
+     const sb_sw_curve_t* s)
 {
     sb_error_t err = SB_SUCCESS;
 
     // Nullify the context.
     SB_NULLIFY(ctx);
-
-    const sb_sw_curve_t* s = NULL;
-    err |= sb_sw_curve_from_id(&s, curve);
 
     // Bail out early if the DRBG needs to be reseeded
     if (drbg != NULL) {
@@ -2498,28 +3136,32 @@ sb_error_t sb_sw_verify_signature_start
 
     // Only the X coordinate of the public key is used as input to initial Z
     // generation, as the Y coordinate is not an independent input.
+#if BOOTROM_BUILD
+    #define label (sb_byte_t*)(bootram->always.boot_random.e)
+    #define label_len sizeof(bootram->always.boot_random)
+#else
     static const sb_byte_t label[] = "sb_sw_verify_signature";
-    err |= sb_sw_generate_z(ctx, drbg, s, e, public->bytes, SB_ELEM_BYTES,
+    const int label_len = sizeof(label);
+#endif
+    err |= sb_sw_generate_z(ctx, drbg, s, public->bytes, SB_ELEM_BYTES,
                             signature->bytes, 2 * SB_ELEM_BYTES,
-                            message->bytes, SB_ELEM_BYTES, label,
-                            sizeof(label));
+                            message->bytes, SB_ELEM_BYTES,
+                            label, label_len);
 
-    sb_fe_from_bytes(MULT_POINT_X(ctx), public->bytes, e);
-    sb_fe_from_bytes(MULT_POINT_Y(ctx), public->bytes + SB_ELEM_BYTES, e);
+    sb_fe_from_bytes(MULT_POINT_X(ctx), public->bytes);
+    sb_fe_from_bytes(MULT_POINT_Y(ctx), public->bytes + SB_ELEM_BYTES);
     err |= SB_ERROR_IF(PUBLIC_KEY_INVALID, !sb_sw_point_validate(ctx, s));
 
-    sb_fe_from_bytes(VERIFY_QR(ctx), signature->bytes, e);
-    sb_fe_from_bytes(VERIFY_QS(ctx), signature->bytes + SB_ELEM_BYTES, e);
-    sb_fe_from_bytes(VERIFY_MESSAGE(ctx), message->bytes, e);
-
-    // Return early if the public key does not represent a point on the curve.
-    SB_RETURN_ERRORS(err, ctx);
-
-    sb_sw_verify_start(ctx, s);
+    sb_fe_from_bytes(VERIFY_QR(ctx), signature->bytes);
+    sb_fe_from_bytes(VERIFY_QS(ctx), signature->bytes + SB_ELEM_BYTES);
+    sb_fe_from_bytes(VERIFY_MESSAGE(ctx), message->bytes);
 
     return err;
 }
+#endif
 
+// NOT USED
+#if !SB_USE_RP2350_SHA256 // no sb_sha256_finish_to_buffer
 sb_error_t sb_sw_verify_signature_sha256_start
     (sb_sw_context_t ctx[static const 1],
      sb_sha256_state_t sha[static const 1],
@@ -2531,6 +3173,10 @@ sb_error_t sb_sw_verify_signature_sha256_start
 {
     sb_sha256_finish_to_buffer(sha);
 
+    const sb_sw_curve_t* curve = NULL;
+    err |= sb_sw_curve_from_id(&curve,c);
+    SB_RETURN_ERRORS(err, ctx);
+
     // This egregious cast works because sb_sw_message_digest_t is just a struct
     // wrapper for a bunch of bytes.
     const sb_sw_message_digest_t* const digest =
@@ -2539,71 +3185,167 @@ sb_error_t sb_sw_verify_signature_sha256_start
     return sb_sw_verify_signature_start(ctx, signature, public, digest, drbg,
                                         curve, e);
 }
+#endif
 
-sb_error_t sb_sw_verify_signature_continue(sb_sw_context_t ctx[static const 1],
-                                           _Bool done[static const 1])
-{
-    sb_error_t err = SB_SUCCESS;
-    const sb_sw_curve_t* curve = NULL;
-
-    err |= SB_ERROR_IF(INCORRECT_OPERATION,
-                       MULT_STATE(ctx)->operation !=
-                       SB_SW_INCREMENTAL_OPERATION_VERIFY_SIGNATURE);
-
-    err |= sb_sw_curve_from_id(&curve, MULT_STATE(ctx)->curve_id);
-
-    SB_RETURN_ERRORS(err, ctx);
-
-    *done = sb_sw_verify_continue(ctx, curve);
-
-    return err;
-}
-
-sb_error_t sb_sw_verify_signature_finish(sb_sw_context_t ctx[static const 1])
-{
-    sb_error_t err = SB_SUCCESS;
-
-    err |= SB_ERROR_IF(INCORRECT_OPERATION,
-                       MULT_STATE(ctx)->operation !=
-                       SB_SW_INCREMENTAL_OPERATION_VERIFY_SIGNATURE);
-
-    SB_RETURN_ERRORS(err, ctx);
-
-    err |= SB_ERROR_IF(NOT_FINISHED, !sb_sw_verify_is_finished(ctx));
-
-    SB_RETURN_ERRORS(err, ctx);
-
-    err |= SB_ERROR_IF(SIGNATURE_INVALID, !MULT_STATE(ctx)->res);
-
-    SB_RETURN(err, ctx);
-}
-
-sb_error_t sb_sw_verify_signature(sb_sw_context_t ctx[static const 1],
+// USED
+sb_verify_result_t sb_sw_verify_signature(sb_sw_context_t ctx[static const 1],
                                   const sb_sw_signature_t signature[static const 1],
                                   const sb_sw_public_t public[static const 1],
                                   const sb_sw_message_digest_t message[static const 1],
                                   sb_hmac_drbg_state_t* const drbg,
-                                  const sb_sw_curve_id_t curve,
-                                  const sb_data_endian_t e)
+                                  const sb_sw_curve_id_t c)
 {
+    const sb_sw_curve_t *curve;
+#if BOOTROM_BUILD
+    ((void)c);
+    curve = &SB_CURVE_SECP256K1;
+#else
     sb_error_t err = SB_SUCCESS;
+    SB_SIG_MERGE_ERROR(err, SB_HARD_ERROR_FROM_ERROR(sb_sw_curve_from_id(&curve,c)));
+    SB_SIG_RETURN_ERRORS(err, ctx);
+#endif
 
-    err |= sb_sw_verify_signature_start(ctx, signature, public, message,
-                                        drbg, curve, e);
-    SB_RETURN_ERRORS(err, ctx);
+    // --------------------------------------------------------------------------------------------
+    // (inlined) err |= sb_sw_verify_signature_start(ctx, signature, public, message, drbg, curve);
 
-    _Bool done;
-    do {
-        err |= sb_sw_verify_signature_continue(ctx, &done);
-        SB_RETURN_ERRORS(err, ctx);
-    } while (!done);
+    // Nullify the context.
+    SB_NULLIFY(ctx);
 
-    err |= sb_sw_verify_signature_finish(ctx);
+#if BOOTROM_BUILD
+    bootrom_assert(SWEETB, !drbg);
+#else
+    // Bail out early if the DRBG needs to be reseeded
+    if (drbg != NULL) {
+        SB_SIG_MERGE_ERROR(err, SB_HARD_ERROR_FROM_ERROR(sb_hmac_drbg_reseed_required(drbg, 1)));
+    }
 
-    SB_RETURN(err, ctx);
+    SB_SIG_RETURN_ERRORS(err, ctx);
+#endif
+
+    // Only the X coordinate of the public key is used as input to initial Z
+    // generation, as the Y coordinate is not an independent input.
+#if BOOTROM_BUILD
+#define label (sb_byte_t*)(bootram->always.boot_random.e)
+#define label_len sizeof(bootram->always.boot_random)
+#else
+    static const sb_byte_t label[] = "sb_sw_verify_signature";
+    const int label_len = sizeof(label);
+#endif
+    uint32_t xor_pattern = 0;
+    SB_SIG_MERGE_ERROR(err, sb_sw_generate_z(ctx, drbg, curve, public->bytes, SB_ELEM_BYTES,
+                                           signature->bytes, 2 * SB_ELEM_BYTES,
+                                           message->bytes, SB_ELEM_BYTES,
+                                           label, label_len));
+    xor_pattern = SB_OPAQUE(xor_pattern) + 0x200;
+    sb_fe_from_bytes(MULT_POINT_X(ctx), public->bytes);
+    sb_fe_from_bytes(MULT_POINT_Y(ctx), public->bytes + SB_ELEM_BYTES);
+    SB_SIG_MERGE_ERROR(err, SB_ERROR_IF_NOT(PUBLIC_KEY_INVALID, sb_sw_point_validate(ctx, curve)));
+    xor_pattern = SB_OPAQUE(xor_pattern) + 0x80;
+    sb_fe_from_bytes(VERIFY_QR(ctx), signature->bytes);
+    sb_fe_from_bytes(VERIFY_QS(ctx), signature->bytes + SB_ELEM_BYTES);
+    sb_fe_from_bytes(VERIFY_MESSAGE(ctx), message->bytes);
+
+    SB_SIG_RETURN_ERRORS(err, ctx);
+    xor_pattern = SB_OPAQUE(xor_pattern) + 0x01;
+
+    // --------------------------
+    // (inlined) err |= SB_ERROR_IF(SIGNATURE_INVALID, !sb_sw_verify_continue_and_finish(ctx, curve));
+    //
+    // SB_SW_VERIFY_OP_STAGE_INV_S:
+    // A signature with either r or s as 0 or N is invalid;
+    // see `sb_test_invalid_sig` for a unit test of this
+    // check.
+    sb_bool_t v0 = sb_sw_scalar_validate(VERIFY_QR(ctx), curve); // state.res &= sb_sw_scalar_validate(VERIFY_QR(v), s);
+    sb_bool_t v1 = sb_sw_scalar_validate(VERIFY_QS(ctx), curve);  // state.res &= sb_sw_scalar_validate(VERIFY_QS(v), s);
+    if (SB_FE_IS_FALSE(v0) || SB_FE_IS_FALSE(v1)) goto err;
+    xor_pattern = SB_OPAQUE(xor_pattern) + 0x02;
+    SB_FE_ASSERT_AND_TRUE(v0, v1);
+
+    SB_FE_START(ctx, curve)
+    SB_FE_MOD_REDUCE  (O_VERIFY_MESSAGE,1)                    // sb_fe_mod_reduce(VERIFY_MESSAGE(v), s->n);
+    SB_FE_MONT_CONVERT(O_C_T5,O_VERIFY_QS,1)                  // sb_fe_mont_convert(C_T5(v), VERIFY_QS(v), s->n); // t5 = s * R
+    SB_FE_MOD_INV_R   (O_C_T5,O_C_T6,O_C_T7,1)                // sb_fe_mod_inv_r(C_T5(v), C_T6(v), C_T7(v), s->n); // t5 = s^-1 * R
+    SB_FE_MOV         (O_C_T6,O_VERIFY_MESSAGE)               // *C_T6(v) = *VERIFY_MESSAGE(v);
+    SB_FE_MONT_MULT   (O_MULT_ADD_KG,O_C_T6,O_C_T5,1)         // sb_fe_mont_mult(MULT_ADD_KG(v), C_T6(v), C_T5(v), s->n); // k_G = m * s^-1
+    SB_FE_MONT_MULT   (O_MULT_K,O_VERIFY_QR,O_C_T5,1)         // sb_fe_mont_mult(MULT_K(v), VERIFY_QR(v), C_T5(v), s->n); // k_P = r * s^-1
+    SB_FE_STOP
+
+    // A message of zero is also invalid.
+    SB_SIG_MERGE_ERROR(err, SB_ERROR_IF_NOT(SIGNATURE_INVALID, SB_FE_HARD_NEQ(VERIFY_MESSAGE(ctx), &curve->n->p)));     // state.res &= !sb_fe_equal(VERIFY_MESSAGE(v), &s->n->p);
+    SB_SIG_RETURN_ERRORS(err, ctx);
+    xor_pattern = SB_OPAQUE(xor_pattern) + 0x04;
+
+// SB_SW_VERIFY_OP_STAGE_INV_Z, SB_SW_VERIFY_OP_STAGE_LADDER:
+    sb_sw_point_mult_add_z_continue(ctx, curve);
+    xor_pattern = SB_OPAQUE(xor_pattern) + 0x400;
+// SB_SW_VERIFY_OP_STAGE_TEST:
+    // This happens when p is some multiple of g that occurs within
+    // the ladder, such that additions inadvertently produce a point
+    // doubling. When that occurs, the private scalar that generated p is
+    // also obvious, so this is bad news. Don't do this.
+    v0 = SB_FE_HARD_NEQ(C_X1(ctx), &curve->p->p);
+    v1 = SB_FE_HARD_NEQ(C_Y1(ctx), &curve->p->p); // state.res &= !(sb_fe_equal(C_X1(v), &s->p->p) & sb_fe_equal(C_Y1(v), &s->p->p));
+
+    if (!(SB_FE_IS_TRUE(v0) || SB_FE_IS_TRUE(v1))) goto err;
+    SB_FE_ASSERT_OR_TRUE(v0, v1);
+    xor_pattern = SB_OPAQUE(xor_pattern) + 0x08;
+
+    // qr ==? x mod N, but we don't have x, just x * z^2
+    // Given that qr is reduced mod N, if it is >= P - N, then it can be used
+    // directly. If it is < P - N, then we need to try to see if the original
+    // value was qr or qr + N.
+
+    // Try directly first:
+    SB_FE_START(ctx, curve)
+    SB_FE_MONT_SQUARE(O_C_T6,O_MULT_Z,0)                                 // sb_fe_mont_square(C_T6(v), MULT_Z(v), s->p); // t6 = Z^2 * R
+    SB_FE_MONT_MULT  (O_C_T7,O_VERIFY_QR,O_C_T6,0)                       // sb_fe_mont_mult(C_T7(v), VERIFY_QR(v), C_T6(v), s->p); // t7 = r * Z^2
+    SB_FE_STOP
+
+    xor_pattern = SB_OPAQUE(xor_pattern) + 0x10;
+
+    v0 = SB_FE_HARD_NEQ(C_T7(ctx), C_X1(ctx));
+    if (SB_FE_IS_FALSE(v0)) {
+        xor_pattern = SB_OPAQUE(xor_pattern) + 0x60;
+        SB_FE_ASSERT_FALSE(v0);
+        goto done;                        // ver |= sb_fe_equal(C_T7(v), C_X1(v));
+    }
+    // If that didn't work, and qr < P - N, then we need to compare
+    // (qr + N) * z^2 against x * z^2
+
+    // If qr = P - N, then we do not compare against (qr + N),
+    // because qr + N would be equal to P, and the X component of the
+    // point is thus zero and should have been rejected.
+
+    // See the small_r_signature tests, which generate signatures
+    // where this path is tested.
+
+    sb_fe_mod_add(C_T5(ctx), VERIFY_QR(ctx), &curve->n->p, curve->p); // t5 = (N + r)
+
+    SB_FE_START(ctx, curve)
+    SB_FE_MONT_MULT(O_C_T7,O_C_T5,O_C_T6,0)     // sb_fe_mont_mult(C_T7(v), C_T5(v), C_T6(v), s->p);     // t7 = (N + r) * Z^2
+    SB_FE_STOP
+
+    sb_fe_sub(C_T5(ctx), &curve->p->p, &curve->n->p);               // t5 = P - N
+    xor_pattern = SB_OPAQUE(xor_pattern) + 0x20;
+
+    // if((sb_fe_lt(VERIFY_QR(v), C_T5(v)) & // r < P - N
+    //          sb_fe_equal(C_T7(v), C_X1(v)))) goto sig_ok; // t7 == x
+    v0 = SB_FE_HARD_LO(VERIFY_QR(ctx), C_T5(ctx));
+    v1 = SB_FE_HARD_EQ(C_T7(ctx), C_X1(ctx));
+    if(SB_FE_IS_TRUE(v0) && SB_FE_IS_TRUE(v1)) {
+        SB_FE_ASSERT_AND_TRUE(v0, v1);
+        xor_pattern = SB_OPAQUE(xor_pattern) + 0x40;
+    done:
+        xor_pattern -= 0x6ec;
+        xor_pattern = xor_pattern | (xor_pattern << 16);
+        return SB_VERIFY_TRUE(xor_pattern);
+    }
+    err:
+    return sb_verify_failed();
 }
 
-sb_error_t sb_sw_verify_signature_sha256
+// NOT USED
+sb_verify_result_t sb_sw_verify_signature_sha256
     (sb_sw_context_t ctx[static const 1],
      sb_sw_message_digest_t digest[static const 1],
      const sb_sw_signature_t signature[static const 1],
@@ -2612,13 +3354,13 @@ sb_error_t sb_sw_verify_signature_sha256
      size_t const input_len,
      sb_hmac_drbg_state_t* const drbg,
      const sb_sw_curve_id_t curve,
-     const sb_data_endian_t e)
+     __unused const sb_data_endian_t e)
 {
     // Compute the message digest and provide it as output.
     sb_sha256_message(&ctx->param_gen.sha, digest->bytes, input, input_len);
 
     return sb_sw_verify_signature(ctx, signature, public, digest, drbg,
-                                  curve, e);
+                                  curve);
 }
 
 #ifdef SB_TEST

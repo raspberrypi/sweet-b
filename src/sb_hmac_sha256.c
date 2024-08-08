@@ -43,9 +43,10 @@
 #include "sb_hmac_sha256.h"
 #include <string.h>
 
-static const sb_byte_t ipad = 0x36;
+//static const sb_byte_t ipad = 0x36;
 static const sb_byte_t opad = 0x5C;
 
+#if !SB_FE_ASM
 static void sb_hmac_sha256_key_pad(sb_hmac_sha256_state_t hmac[static const 1],
                                    sb_byte_t const pad)
 {
@@ -54,7 +55,12 @@ static void sb_hmac_sha256_key_pad(sb_hmac_sha256_state_t hmac[static const 1],
         hmac->key[i] ^= pad;
     }
 }
+#else
+extern void sb_hmac_sha256_key_pad(sb_hmac_sha256_state_t hmac[static const 1],
+                                   sb_byte_t const pad);
+#endif
 
+#if !SB_FE_ASM
 void sb_hmac_sha256_init(sb_hmac_sha256_state_t hmac[static const restrict 1],
                          const sb_byte_t* const restrict key,
                          size_t const keylen)
@@ -71,7 +77,35 @@ void sb_hmac_sha256_init(sb_hmac_sha256_state_t hmac[static const restrict 1],
 
     sb_hmac_sha256_reinit(hmac);
 }
+#else
+extern void sb_hmac_sha256_init_small(sb_hmac_sha256_state_t hmac[static const restrict 1],
+                         const sb_byte_t* const restrict key);
 
+void sb_hmac_sha256_init(sb_hmac_sha256_state_t hmac[static const restrict 1],
+                         const sb_byte_t* const restrict key,
+                         size_t const keylen)
+ {
+     if ( keylen != 32)
+     {
+            memset(hmac, 0, sizeof(sb_hmac_sha256_state_t));
+
+        if (keylen > SB_SHA256_BLOCK_SIZE) {
+            sb_sha256_init(&hmac->sha);
+            sb_sha256_update(&hmac->sha, key, keylen);
+            sb_sha256_finish(&hmac->sha, hmac->key);
+        } else {
+                memcpy(hmac->key, key, keylen);
+        }
+
+        sb_hmac_sha256_reinit(hmac);
+     } else {
+            // assumes keylen <= SB_SHA256_BLOCK_SIZE
+            sb_hmac_sha256_init_small(hmac, key);
+     }
+ }
+
+#endif
+#if !SB_FE_ASM
 void sb_hmac_sha256_reinit(sb_hmac_sha256_state_t hmac[static const 1])
 {
     // Inner-padded key
@@ -83,14 +117,14 @@ void sb_hmac_sha256_reinit(sb_hmac_sha256_state_t hmac[static const 1])
     // Un-pad key
     sb_hmac_sha256_key_pad(hmac, ipad);
 }
-
+#endif
 void sb_hmac_sha256_update(sb_hmac_sha256_state_t hmac[static const restrict 1],
                            const sb_byte_t* const restrict input,
                            const size_t len)
 {
     sb_sha256_update(&hmac->sha, input, len);
 }
-
+#if !SB_FE_ASM
 void sb_hmac_sha256_finish(sb_hmac_sha256_state_t hmac[static const restrict 1],
                            sb_byte_t output[static const
                            restrict SB_SHA256_SIZE])
@@ -109,7 +143,7 @@ void sb_hmac_sha256_finish(sb_hmac_sha256_state_t hmac[static const restrict 1],
     // Un-pad key
     sb_hmac_sha256_key_pad(hmac, opad);
 }
-
+#endif
 // Mmm-hmm.
 void sb_hmac_sha256_finish_to_key(sb_hmac_sha256_state_t hmac[static const 1]);
 

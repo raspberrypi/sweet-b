@@ -43,62 +43,36 @@
 #include "sb_fe.h"
 #include "sb_sw_curves.h"
 
+extern void sb_fe_from_bytes_big_endian(sb_fe_t dest[static const restrict 1],
+                      const sb_byte_t src[static const restrict SB_ELEM_BYTES]);
+
+extern void sb_fe_to_bytes_big_endian(sb_fe_t dest[static const restrict 1],
+                      const sb_byte_t src[static const restrict SB_ELEM_BYTES]);
+
 // Convert an appropriately-sized set of bytes (src) into a field element
 // using the given endianness.
 void sb_fe_from_bytes(sb_fe_t dest[static const restrict 1],
-                      const sb_byte_t src[static const restrict SB_ELEM_BYTES],
-                      const sb_data_endian_t e)
+                      const sb_byte_t src[static const restrict SB_ELEM_BYTES])
 {
-    sb_wordcount_t src_i = 0;
-    if (e == SB_DATA_ENDIAN_LITTLE) {
-        src_i = SB_ELEM_BYTES - 1;
-    }
-    for (sb_wordcount_t i = 0; i < SB_FE_WORDS; i++) {
-        sb_word_t t = 0;
-        for (sb_wordcount_t j = 0; j < (SB_WORD_BITS / 8); j++) {
-#if SB_WORD_SIZE != 1
-            t <<= (sb_word_t) 8;
+#if SB_SW_ENDIANITY==SB_DATA_ENDIAN_BIG
+        sb_fe_from_bytes_big_endian(dest,src);
+#else
+        memcpy(dest,src,32);
 #endif
-            t |= src[src_i];
-            if (e == SB_DATA_ENDIAN_LITTLE) {
-                src_i--;
-            } else {
-                src_i++;
-            }
-        }
-        SB_FE_WORD(dest, SB_FE_WORDS - 1 - i) = t;
-    }
-
-    SB_FE_UNQR(dest);
+        SB_FE_UNQR(dest); // <-- this was only in the little-endian case, but I think that was a bug
 }
 
 // Convert a field element into bytes using the given endianness.
 void sb_fe_to_bytes(sb_byte_t dest[static const restrict SB_ELEM_BYTES],
-                    const sb_fe_t src[static const restrict 1],
-                    const sb_data_endian_t e)
+                    const sb_fe_t src[static const restrict 1])
 {
-    sb_wordcount_t dest_i = 0;
-    if (e == SB_DATA_ENDIAN_LITTLE) {
-        dest_i = SB_ELEM_BYTES - 1;
-    }
-    for (sb_wordcount_t i = 0; i < SB_FE_WORDS; i++) {
-        sb_word_t t = SB_FE_WORD(src, SB_FE_WORDS - 1 - i);
-        for (sb_wordcount_t j = 0; j < (SB_WORD_BITS / 8); j++) {
-            dest[dest_i] = (sb_byte_t) (t >> (SB_WORD_BITS - 8));
-#if SB_WORD_SIZE != 1
-            t <<= (sb_word_t) 8;
+#if SB_SW_ENDIANITY==SB_DATA_ENDIAN_BIG
+        sb_fe_to_bytes_big_endian((sb_fe_t *)__builtin_assume_aligned(dest,4),(const sb_byte_t *)src->words);
+#else
+        memcpy(dest,src,32);
 #endif
-            if (e == SB_DATA_ENDIAN_LITTLE) {
-                dest_i--;
-            } else {
-                dest_i++;
-            }
-        }
-    }
-}
 
-#if !SB_FE_ASM
-/* These helpers are only used in C source. */
+}
 
 // Returns an all-0 or all-1 word given a boolean flag 0 or 1 (respectively)
 static inline sb_word_t sb_word_mask(const sb_word_t a)
@@ -127,10 +101,12 @@ static inline sb_uword_t sb_fe_nonneg_word_mask(const sb_bitcount_t a,
 
 }
 
+#if !SB_FE_ASM
+
 /* The following functions are defined in assembly if assembly support is
  * provided. */
 
-sb_word_t sb_fe_equal(const sb_fe_t left[static const 1],
+sb_word_t SB_FE_EQ(const sb_fe_t left[static const 1],
                       const sb_fe_t right[static const 1])
 {
     sb_word_t r = 0;
@@ -185,7 +161,7 @@ sb_fe_test_bit(const sb_fe_t a[static const 1], const sb_bitcount_t bit)
 
 // Add the given field elements and store the result in dest, which MAY alias
 // left or right. The carry is returned.
-
+#endif
 sb_word_t sb_fe_add(sb_fe_t dest[static const 1],
                     const sb_fe_t left[static const 1],
                     const sb_fe_t right[static const 1])
@@ -203,13 +179,13 @@ sb_word_t sb_fe_add(sb_fe_t dest[static const 1],
     SB_FE_UNQR(dest);
     return carry;
 }
-
+#if !SB_FE_ASM
 // Subtract the given field elements and store the result in dest, which MAY
-// alias left or right. The borrow is returned.
-sb_word_t sb_fe_sub_borrow(sb_fe_t dest[static const 1],
-                           const sb_fe_t left[static const 1],
-                           const sb_fe_t right[static const 1],
-                           sb_word_t borrow)
+// alias left or right. The not-borrow is returned.
+static sb_word_t sb_fe_sub_borrow(sb_fe_t dest[static const 1],
+                                  const sb_fe_t left[static const 1],
+                                  const sb_fe_t right[static const 1],
+                                  sb_word_t borrow)
 {
 
     SB_UNROLL_2(i, 0, {
@@ -221,7 +197,7 @@ sb_word_t sb_fe_sub_borrow(sb_fe_t dest[static const 1],
     });
 
     SB_FE_UNQR(dest);
-    return borrow;
+    return !borrow;
 }
 
 sb_word_t sb_fe_lt(const sb_fe_t left[static 1],
@@ -279,6 +255,7 @@ void sb_fe_cond_add_p_1(sb_fe_t dest[static const restrict 1],
 
     SB_FE_UNQR(dest);
 }
+#endif
 
 // Swap `a` and `b` if `c` is true using constant-time choice.
 void sb_fe_ctswap(sb_word_t c,
@@ -292,7 +269,8 @@ void sb_fe_ctswap(sb_word_t c,
     });
 }
 
-#endif
+
+#if !SB_FE_ASM
 
 /* Field element subtraction without incoming borrow. */
 sb_word_t sb_fe_sub(sb_fe_t dest[static const 1],
@@ -310,16 +288,17 @@ static void sb_fe_qr(sb_fe_t dest[static const restrict 1],
                      sb_word_t const carry,
                      const sb_prime_field_t p[static const restrict 1])
 {
-    const sb_word_t b = sb_fe_lt(&p->p, dest);
+    const sb_word_t b = SB_FE_LO(&p->p, dest);
     sb_fe_cond_sub_p(dest, carry | b, &p->p);
-    SB_ASSERT(sb_fe_equal(dest, &p->p) || sb_fe_lt(dest, &p->p),
+    SB_ASSERT(SB_FE_EQ(dest, &p->p) || SB_FE_LO(dest, &p->p),
               "quasi-reduction must always produce quasi-reduced output");
-    SB_ASSERT(!sb_fe_equal(dest, &SB_FE_ZERO),
+    SB_ASSERT(!SB_FE_EQZ(dest), // SB_ASSERT(!SB_FE_EQ(dest, &SB_FE_ZERO),
               "quasi-reduction must always produce quasi-reduced output");
 
     SB_FE_QR(dest, p);
 }
-
+#endif
+#if !SB_FE_ASM
 // Quasi-reduce the input, under the assumption that 2 * p > 2^SB_FE_BITS or
 // that the input < 2 * p. The input range is [0, 2^SB_FE_BITS - 1].
 void sb_fe_mod_reduce(sb_fe_t dest[static const restrict 1],
@@ -341,6 +320,7 @@ void sb_fe_mod_reduce(sb_fe_t dest[static const restrict 1],
     sb_fe_mod_sub(dest, dest, &SB_FE_ONE, p);
 }
 
+
 // Given quasi-reduced left and right, produce quasi-reduced left - right.
 // This is done as a subtraction of (right - 1) followed by addition of
 // 1 or (p + 1), which means that a result of all zeros is never written back
@@ -352,15 +332,15 @@ void sb_fe_mod_sub(sb_fe_t dest[static const 1],
 {
     SB_FE_ASSERT_QR(left, p);
     SB_FE_ASSERT_QR(right, p);
-    const sb_word_t b = sb_fe_sub_borrow(dest, left, right, 1);
+    const sb_word_t b = !sb_fe_sub_borrow(dest, left, right, 1);
     sb_fe_cond_add_p_1(dest, b, &p->p);
-    SB_ASSERT(sb_fe_equal(dest, &p->p) || sb_fe_lt(dest, &p->p),
+    SB_ASSERT(SB_FE_EQ(dest, &p->p) || SB_FE_LO(dest, &p->p),
               "modular subtraction must always produce quasi-reduced output");
-    SB_ASSERT(!sb_fe_equal(dest, &SB_FE_ZERO),
+    SB_ASSERT(!SB_FE_EQZ(dest),  //  SB_ASSERT(!SB_FE_EQ(dest, &SB_FE_ZERO),
               "modular subtraction must always produce quasi-reduced output");
     SB_FE_QR(dest, p);
 }
-
+#endif
 // dest = p - left mod n
 
 void sb_fe_mod_negate(sb_fe_t dest[static const 1],
@@ -371,7 +351,7 @@ void sb_fe_mod_negate(sb_fe_t dest[static const 1],
 }
 
 // Given quasi-reduced left and right, produce quasi-reduced left + right.
-
+#if !SB_FE_ASM
 void
 sb_fe_mod_add(sb_fe_t dest[static const 1], const sb_fe_t left[static const 1],
               const sb_fe_t right[static const 1],
@@ -382,7 +362,7 @@ sb_fe_mod_add(sb_fe_t dest[static const 1], const sb_fe_t left[static const 1],
     sb_word_t carry = sb_fe_add(dest, left, right);
     sb_fe_qr(dest, carry, p);
 }
-
+#endif
 void sb_fe_mod_double(sb_fe_t dest[static const 1],
                       const sb_fe_t left[static const 1],
                       const sb_prime_field_t p[static const 1])
@@ -465,7 +445,6 @@ void sb_fe_mont_mult(sb_fe_t A[static const restrict 1],
      * This means that at step 2.2, a_0 can be used directly, and x_i * y_0
      * does not need to be recomputed.
      */
-
     sb_word_t hw = 0;
 
     SB_UNROLL_2(i, 0, { // for i from 0 to (n - 1)
@@ -493,20 +472,21 @@ void sb_fe_mont_mult(sb_fe_t A[static const restrict 1],
                             SB_FE_WORD(&p->p, j), SB_FE_WORD(A, j),
                             c2);
         });
-
+#if 1
         // A = A / b
         SB_UNROLL_1(j, 1, { SB_FE_WORD(A, j - 1) = SB_FE_WORD(A, j); });
-
+#endif
         sb_add_carry_2(&hw, &SB_FE_WORD(A, SB_FE_WORDS - 1), hw, c, c2);
         SB_ASSERT(hw < 2, "W + W * W + W * W overflows at most once");
+
     });
 
     // If A > p or hw is set, A = A - p
 
     sb_fe_qr(A, hw, p);
+
 }
 
-#endif
 
 // Montgomery squaring: dest = left * left * R^-1 mod p
 void sb_fe_mont_square(sb_fe_t dest[static const restrict 1],
@@ -515,7 +495,7 @@ void sb_fe_mont_square(sb_fe_t dest[static const restrict 1],
 {
     sb_fe_mont_mult(dest, left, left, p);
 }
-
+#endif
 // Montgomery reduction: dest = left * R^-1 mod p, implemented by Montgomery
 // multiplication by 1.
 void sb_fe_mont_reduce(sb_fe_t dest[static const restrict 1],
@@ -527,12 +507,14 @@ void sb_fe_mont_reduce(sb_fe_t dest[static const restrict 1],
 
 // Montgomery domain conversion: dest = left * R mod p, implemented by
 // Montgomery multiplication by R^2 mod p.
+#if !SB_FE_ASM
 void sb_fe_mont_convert(sb_fe_t dest[static const restrict 1],
                         const sb_fe_t left[static const 1],
                         const sb_prime_field_t p[static const 1])
 {
     sb_fe_mont_mult(dest, left, &p->r2_mod_p, p);
 }
+#endif
 
 // x = x^e mod m
 
@@ -554,7 +536,7 @@ sb_fe_mod_expt_r(sb_fe_t x[static const restrict 1],
 {
     _Bool by = 0;
     *t2 = p->r_mod_p;
-    for (sb_bitcount_t i = p->bits - 1; i >= e_shift && i <= SB_FE_BITS; i--) {
+    for (sb_bitcount_t i = 255; i >= e_shift && i <= SB_FE_BITS; i--) {
         const sb_word_t b = sb_fe_test_bit(e, i);
         if (!by) {
             if (b) {
@@ -572,7 +554,7 @@ sb_fe_mod_expt_r(sb_fe_t x[static const restrict 1],
     }
     *x = *t2;
 }
-
+#if !SB_FE_ASM
 // See sb_prime_field_t in sb_fe.h for more comments on modular inversion.
 void sb_fe_mod_inv_r(sb_fe_t dest[static const restrict 1],
                      sb_fe_t t2[static const restrict 1],
@@ -582,7 +564,7 @@ void sb_fe_mod_inv_r(sb_fe_t dest[static const restrict 1],
     sb_fe_mod_expt_r(dest, &p->p_minus_two_f1, 0, t2, t3, p);
     sb_fe_mod_expt_r(dest, &p->p_minus_two_f2, 0, t2, t3, p);
 }
-
+#endif
 static _Bool sb_fe_mod_sqrt_r(sb_fe_t x[static const restrict 1],
                               sb_fe_t t1[static const restrict 1],
                               sb_fe_t t2[static const restrict 1],
@@ -598,7 +580,7 @@ static _Bool sb_fe_mod_sqrt_r(sb_fe_t x[static const restrict 1],
     *t4 = *x; // t4 = x * R
     sb_fe_mod_expt_r(x, t1, 2, t2, t3, p); // x = (t4 ^ (p + 1) / 4) * R
     sb_fe_mont_square(t3, x, p); // t3 = x ^ 2 * R
-    return sb_fe_equal(t3, t4);
+    return SB_FE_EQ(t3, t4);
 }
 
 _Bool sb_fe_mod_sqrt(sb_fe_t x[static const restrict 1],

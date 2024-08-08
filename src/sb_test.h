@@ -129,6 +129,15 @@ extern _Bool sb_test_assert_failed(const char* file, const char* line,
 #define SB_DEFINE_TEST(name) \
     extern _Bool sb_test_ ## name(void)
 
+#if BOOTROM_HARDENING
+#define SB_ERROR_FROM_VERIFY(x, y) ({ hx_xbool _save = x; hx_check_xbool(_save, HX_XOR_SIG_VERIFIED); hx_is_xtrue(_save) ? SB_SUCCESS : (y); })
+#define SB_TEST_ASSERT_VERIFY_SUCCESS(x) SB_TEST_ASSERT_SUCCESS(SB_ERROR_FROM_VERIFY(x, SB_ERROR_SIGNATURE_INVALID))
+#define SB_TEST_ASSERT_VERIFY_ERROR(x, y) SB_TEST_ASSERT_ERROR(SB_ERROR_FROM_VERIFY(x, y), y)
+#else
+#define SB_TEST_ASSERT_VERIFY_SUCCESS(x) SB_TEST_ASSERT_SUCCESS(x)
+#define SB_TEST_ASSERT_VERIFY_ERROR(x, y) SB_TEST_ASSERT_ERROR(x, y)
+#endif
+
 #include "sb_test_list.h"
 
 #undef SB_TEST_IMPL

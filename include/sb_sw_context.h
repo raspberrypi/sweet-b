@@ -96,7 +96,11 @@ typedef struct sb_sw_context_param_gen_t {
     sb_byte_t buf[SB_SW_CONTEXT_PARAM_BUF_ELEMS * SB_ELEM_BYTES];
 } sb_sw_context_param_gen_t; /**< Convenience typedef */
 
+#if !SB_USE_RP2350_SHA256
 SB_CONTEXT_SIZE_ASSERT(sb_sw_context_param_gen_t, 424);
+#else
+//SB_CONTEXT_SIZE_ASSERT(sb_sw_context_param_gen_t, 424);
+#endif
 
 /** @struct sb_sw_context_curve_arith_t
  *  @brief Private context structure for curve arithmetic operations.

@@ -437,7 +437,6 @@ static const sb_fe_t SB_FE_ZERO = SB_FE_CONST(0, 0, 0, 0);
  *    - ::sb_fe_equal
  *    - ::sb_fe_test_bit
  *    - ::sb_fe_add
- *    - ::sb_fe_sub_borrow
  *    - ::sb_fe_lt
  *    - ::sb_fe_cond_sub_p
  *    - ::sb_fe_cond_add_p_1
@@ -495,9 +494,36 @@ typedef struct sb_prime_field_t {
     /** 2^SB_FE_BITS mod p */
     sb_fe_t r_mod_p;
 
-    /** The number of bits in the prime. */
-    sb_bitcount_t bits;
+//    /** The number of bits in the prime. */
+//    sb_bitcount_t bits;
 } sb_prime_field_t; /**< Convenience typedef */
+
+// as above but with padding at the end
+typedef struct sb_prime_field_padded_t {
+    /** The prime as a ::sb_fe_t value. */
+    sb_fe_t p;
+
+    /** -(p^-1) mod M, where M is the size of ::sb_word_t . */
+    sb_word_t p_mp;
+
+    /** First factor of p - 2, used for Fermat's little theorem based
+     *  inversion. */
+    sb_fe_t p_minus_two_f1;
+
+    /** Second factor of p - 2. */
+    sb_fe_t p_minus_two_f2;
+
+    /** 2^(SB_FE_BITS * 2) mod p */
+    sb_fe_t r2_mod_p;
+
+    /** 2^SB_FE_BITS mod p */
+    sb_fe_t r_mod_p;
+
+    uint32_t pad0;
+
+//    /** The number of bits in the prime. */
+//    sb_bitcount_t bits;
+} sb_prime_field_padded_t; /**< Convenience typedef */
 
 // Assembly assumes that p_mp is at a fixed offset based on the size of sb_fe_t.
 #if SB_FE_ASM
@@ -513,13 +539,10 @@ _Static_assert(offsetof(sb_prime_field_t, p_mp) == SB_ELEM_BYTES,
  * endianness \p e.
  *
  * @param [out] dest The resulting field element.
- * @param [in] src The ::SB_ELEM_BYTES representing the field element in the
- * endianness \p e.
- * @param [in] e The endianness of the input bytes.
+ * @param [in] src The ::SB_ELEM_BYTES representing the field element.
  */
 extern void sb_fe_from_bytes(sb_fe_t dest[static restrict 1],
-                             const sb_byte_t src[static restrict SB_ELEM_BYTES],
-                             sb_data_endian_t e);
+                             const sb_byte_t src[static restrict SB_ELEM_BYTES]);
 
 /**
  * @brief Field element to bytes conversion.
@@ -529,11 +552,9 @@ extern void sb_fe_from_bytes(sb_fe_t dest[static restrict 1],
  *
  * @param [out] dest The resulting set of ::SB_ELEM_BYTES bytes.
  * @param [in] src The field element.
- * @param [in] e The endianness of the output bytes.
  */
 extern void sb_fe_to_bytes(sb_byte_t dest[static restrict SB_ELEM_BYTES],
-                           const sb_fe_t src[static restrict 1],
-                           sb_data_endian_t e);
+                           const sb_fe_t src[static restrict 1]);
 
 /**
  * @brief Constant-time field element equality.
@@ -575,35 +596,15 @@ extern sb_word_t sb_fe_add(sb_fe_t dest[static 1],
                            const sb_fe_t right[static 1]);
 
 /**
- * @brief Constant-time field element subtraction with borrow.
- *
- * Subtract two field elements, accepting an incoming borrow, and returning a
- * borrow value.
- *
- * @param [in,out] dest The destination field element. May alias \p left or
- * \p right.
- * @param [in] left The field element to subtract \p right from.
- * @param [in] right The field element to be subtracted from \p left.
- * @param [in] borrow Incoming borrow for the subtraction. Logically added to
- * \p right.
- * @return 0 if there was no borrow from the subtraction, or 1 if there was a
- * borrow.
- */
-extern sb_word_t sb_fe_sub_borrow(sb_fe_t dest[static 1],
-                                  const sb_fe_t left[static 1],
-                                  const sb_fe_t right[static 1],
-                                  sb_word_t borrow);
-
-/**
  * @brief Constant-time field element subtraction.
  *
- * Subtract two field elements, returning a borrow value.
+ * Subtract two field elements, returning a not-borrow value.
  *
  * @param [in,out] dest The destination field element. May alias \p left or
  * \p right.
  * @param [in] left The field element to subtract \p right from.
  * @param [in] right The field element to be subtracted from \p left.
- * @return 0 if there was no borrow from the subtraction, or 1 if there was a
+ * @return 1 if there was no borrow from the subtraction, or 0 if there was a
  * borrow.
  */
 extern sb_word_t sb_fe_sub(sb_fe_t dest[static 1],
@@ -637,16 +638,36 @@ extern void sb_fe_cond_add_p_1(sb_fe_t dest[static restrict 1],
                                const sb_fe_t p[static restrict 1]);
 
 /**
- * @brief Constant-time less-than comparison.
+ * @brief Non-constant-time general comparison.
  *
- * In constant time, compute whether \p left is less than \p right.
+ * Compare \p left and \p right.
  *
  * @param [in] left The left side of the comparison.
- * @param [in] right The right side of the comparison.
- * @return 1 if left is less than right, or 0 otherwise.
+ * @param [in] right The right side of the comparison. or NULL to compare with 0
+ * @return -1 if left is less than right, 0 if equal, +1 if left is greater than right
  */
-extern sb_word_t sb_fe_lt(const sb_fe_t left[static 1],
-                          const sb_fe_t right[static 1]);
+extern int sb_fe_cmp(const sb_fe_t left[static 1],
+                     const sb_fe_t *right);
+
+#define SB_FE_LO(X,Y) (sb_fe_cmp(X,Y)<0)
+#define SB_FE_LS(X,Y) (sb_fe_cmp(X,Y)<=0)
+#define SB_FE_EQ(X,Y) (sb_fe_cmp(X,Y)==0)
+#define SB_FE_NE(X,Y) (sb_fe_cmp(X,Y)!=0)
+#define SB_FE_HS(X,Y) (sb_fe_cmp(X,Y)>=0)
+#define SB_FE_HI(X,Y) (sb_fe_cmp(X,Y)>0)
+#define SB_FE_EQZ(X)  (sb_fe_cmp(X,0)==0)
+
+// /**
+//  * @brief Constant-time less-than comparison.
+//  *
+//  * In constant time, compute whether \p left is less than \p right.
+//  *
+//  * @param [in] left The left side of the comparison.
+//  * @param [in] right The right side of the comparison.
+//  * @return 1 if left is less than right, or 0 otherwise.
+//  */
+// extern sb_word_t sb_fe_lt(const sb_fe_t left[static 1],
+//                           const sb_fe_t right[static 1]);
 
 /**
  * @brief Constant-time conditional field-element swap.

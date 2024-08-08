@@ -51,6 +51,9 @@
 #include <sb_sha256.h>
 #include <sb_hkdf.h>
 #include <sb_sw_context.h>
+#include <sb_sw_curve_support.h>
+
+#define SB_SW_ENDIANITY SB_DATA_ENDIAN_BIG
 
 // see sb_types.h for the definition of sb_single_t and sb_double_t
 
@@ -72,24 +75,6 @@ typedef sb_single_t sb_sw_compressed_t;
 
 /** An ECDSA signature on a 256-bit short Weierstrass curve. */
 typedef sb_double_t sb_sw_signature_t;
-
-/** @def SB_SW_P256_SUPPORT
-    @brief Define this to 0 to disable NIST P-256 curve support in Sweet B. */
-#ifndef SB_SW_P256_SUPPORT
-#define SB_SW_P256_SUPPORT 1
-#endif
-
-/** @def SB_SW_SECP256K1_SUPPORT
-    @brief Define this to 0 to disable SECG secp256k1 curve support in
-    Sweet B. */
-
-#ifndef SB_SW_SECP256K1_SUPPORT
-#define SB_SW_SECP256K1_SUPPORT 1
-#endif
-
-#if !SB_SW_P256_SUPPORT && !SB_SW_SECP256K1_SUPPORT
-#error "One of SB_SW_P256_SUPPORT or SB_SW_SECP256K1_SUPPORT must be enabled!"
-#endif
 
 /** @def SB_SW_FIPS186_4_CANDIDATES
  *  @brief The number of candidates to be tested for private key and
@@ -802,7 +787,7 @@ extern sb_error_t sb_sw_composite_sign_unwrap_signature
  *  supplied drbg requires reseeding, or in the case of DRBG failure.
  *  @memberof sb_sw_context_t
  */
-extern sb_error_t sb_sw_verify_signature_sha256
+extern sb_verify_result_t sb_sw_verify_signature_sha256
     (sb_sw_context_t context[static 1],
      sb_sw_message_digest_t digest[static 1],
      const sb_sw_signature_t signature[static 1],
@@ -833,50 +818,44 @@ extern sb_error_t sb_sw_verify_signature_sha256
  *  @param [in,out] drbg Optional DRBG, used to generate entropy for
  *  side-channel mitigations.
  *  @param [in] curve Curve on which to generate the signature.
- *  @param [in] e Endianness of the public key, message digest, and
- *  signature. Use big endian for most situations.
  *  @return Returns ::SB_SUCCESS if the signature is valid or
  *  ::SB_ERROR_SIGNATURE_INVALID exclusively if the signature is invalid. Fails
  *  if the supplied curve or public key is invalid, if the optionally
  *  supplied drbg requires reseeding, or in the case of DRBG failure.
  *  @memberof sb_sw_context_t
  */
-extern sb_error_t sb_sw_verify_signature(sb_sw_context_t context[static 1],
-                                         const sb_sw_signature_t signature[static 1],
-                                         const sb_sw_public_t public[static 1],
-                                         const sb_sw_message_digest_t message[static 1],
-                                         sb_hmac_drbg_state_t* drbg,
-                                         sb_sw_curve_id_t curve,
-                                         sb_data_endian_t e);
+extern sb_verify_result_t sb_sw_verify_signature(sb_sw_context_t context[static 1],
+                                                 const sb_sw_signature_t signature[static 1],
+                                                 const sb_sw_public_t public[static 1],
+                                                 const sb_sw_message_digest_t message[static 1],
+                                                 sb_hmac_drbg_state_t* drbg,
+                                                 sb_sw_curve_id_t curve);
 
-/** Begins verifying a supplied signature of a given message digest with a
- *  given public key. See ::sb_sw_verify_signature for notes on how to use this
- *  method.
- *
- *  @param [in] context Private context structure allocated by the caller.
- *  @param [in] signature Signature to verify using the given \p public key
- *  and \p message digest.
- *  @param [in] public Public key to use for signature verification. Will be
- *  checked for validity before use.
- *  @param [in] message Message digest to verify the signature of.
- *  @param [in,out] drbg Optional DRBG, used to generate entropy for
- *  side-channel mitigations.
- *  @param [in] curve Curve on which to generate the signature.
- *  @param [in] e Endianness of the public key, message digest, and
- *  signature. Use big endian for most situations.
- *  @return Returns ::SB_SUCCESS if verification has been started. Fails
- *  if the supplied curve or public key is invalid, if the optionally
- *  supplied drbg requires reseeding, or in the case of DRBG failure.
- *  @memberof sb_sw_context_t
- */
-extern sb_error_t sb_sw_verify_signature_start
-    (sb_sw_context_t context[static 1],
-     const sb_sw_signature_t signature[static 1],
-     const sb_sw_public_t public[static 1],
-     const sb_sw_message_digest_t message[static 1],
-     sb_hmac_drbg_state_t* drbg,
-     sb_sw_curve_id_t curve,
-     sb_data_endian_t e);
+// /** Begins verifying a supplied signature of a given message digest with a
+//  *  given public key. See ::sb_sw_verify_signature for notes on how to use this
+//  *  method.
+//  *
+//  *  @param [in] context Private context structure allocated by the caller.
+//  *  @param [in] signature Signature to verify using the given \p public key
+//  *  and \p message digest.
+//  *  @param [in] public Public key to use for signature verification. Will be
+//  *  checked for validity before use.
+//  *  @param [in] message Message digest to verify the signature of.
+//  *  @param [in,out] drbg Optional DRBG, used to generate entropy for
+//  *  side-channel mitigations.
+//  *  @param [in] curve Curve on which to generate the signature.
+//  *  @return Returns ::SB_SUCCESS if verification has been started. Fails
+//  *  if the supplied curve or public key is invalid, if the optionally
+//  *  supplied drbg requires reseeding, or in the case of DRBG failure.
+//  *  @memberof sb_sw_context_t
+//  */
+// extern sb_error_t sb_sw_verify_signature_start
+//     (sb_sw_context_t context[static 1],
+//      const sb_sw_signature_t signature[static 1],
+//      const sb_sw_public_t public[static 1],
+//      const sb_sw_message_digest_t message[static 1],
+//      sb_hmac_drbg_state_t* drbg,
+//      sb_sw_curve_id_t curve);
 
 /** Finishes computing the SHA256 hash of a message, and begins verifying the
  *  supplied signature of the resulting digest with a given public key.
@@ -898,7 +877,7 @@ extern sb_error_t sb_sw_verify_signature_start
  *  supplied drbg requires reseeding, or in the case of DRBG failure.
  *  @memberof sb_sw_context_t
  */
-extern sb_error_t sb_sw_verify_signature_sha256_start
+extern sb_verify_result_t sb_sw_verify_signature_sha256_start
     (sb_sw_context_t context[static 1],
      sb_sha256_state_t sha[static 1],
      const sb_sw_signature_t signature[static 1],
@@ -907,32 +886,31 @@ extern sb_error_t sb_sw_verify_signature_sha256_start
      sb_sw_curve_id_t curve,
      sb_data_endian_t e);
 
-/** Continues verifying a supplied signature of a given message digest with a
- *  given public key.
- *
- *  @param [in] context Private context structure allocated by the caller.
- *  @param [out] done Indication of whether computation is done (no further
- *  progress can be made until the finish function is called).
- *  @return On success, ::SB_SUCCESS. Fails if the context has not been
- *  initialized by a prior to call to ::sb_sw_verify_signature_start.
- *  @memberof sb_sw_context_t
- */
-extern sb_error_t sb_sw_verify_signature_continue
-    (sb_sw_context_t context[static 1],
-     _Bool done[static 1]);
-
-/** Finishes verifying a supplied signature of a given message digest with a
- *  given public key.
- *
- *  @param [in] context Private context structure allocated by the caller.
- *  @return Returns ::SB_SUCCESS if the signature is valid or
- *  ::SB_ERROR_SIGNATURE_INVALID exclusively if the signature is invalid. Fails
- *  if the context has not been initialized by a prior to call to
- *  ::sb_sw_verify_signature_start.
- *  @memberof sb_sw_context_t
- */
-extern sb_error_t sb_sw_verify_signature_finish
-    (sb_sw_context_t context[static 1]);
+// /** Continues verifying a supplied signature of a given message digest with a
+//  *  given public key.
+//  *
+//  *  @param [in] context Private context structure allocated by the caller.
+//  *  @param [out] done Indication of whether computation is done (no further
+//  *  progress can be made until the finish function is called).
+//  *  @return On success, ::SB_SUCCESS. Fails if the context has not been
+//  *  initialized by a prior to call to ::sb_sw_verify_signature_start.
+//  *  @memberof sb_sw_context_t
+//  */
+// extern sb_error_t sb_sw_verify_signature_continue
+//     (sb_sw_context_t context[static 1]);
+//
+// /** Finishes verifying a supplied signature of a given message digest with a
+//  *  given public key.
+//  *
+//  *  @param [in] context Private context structure allocated by the caller.
+//  *  @return Returns ::SB_SUCCESS if the signature is valid or
+//  *  ::SB_ERROR_SIGNATURE_INVALID exclusively if the signature is invalid. Fails
+//  *  if the context has not been initialized by a prior to call to
+//  *  ::sb_sw_verify_signature_start.
+//  *  @memberof sb_sw_context_t
+//  */
+// extern sb_error_t sb_sw_verify_signature_finish
+//     (sb_sw_context_t context[static 1]);
 
 /** @} */
 

@@ -40,6 +40,7 @@
  */
 
 #ifdef SB_TEST_IMPL
+#include "sb_sw_lib.h"
 
 // Known answer tests using examples from FIPS 180-2
 // Can be found in their respective files.
@@ -54,9 +55,11 @@ SB_DEFINE_TEST(hkdf);
 // These tests are for general field operations
 // and can be found in sb_fe_tests.c.h
 SB_DEFINE_TEST(fe);
+#if SB_SW_P256_SUPPORT
 SB_DEFINE_TEST(mont_mult);
 SB_DEFINE_TEST(mont_mult_overflow);
 SB_DEFINE_TEST(mod_expt_p);
+#endif
 SB_DEFINE_TEST(mod_sqrt);
 
 // Testing Keygen, ECDH, ECDSA and underlying mathematics for elliptic curves
@@ -66,57 +69,117 @@ SB_DEFINE_TEST(mod_sqrt);
 // operations such as secp256k1's endomorphism property, the Montgomery ladder,
 // and Shamir's trick.
 SB_DEFINE_TEST(ladder_simple);
+#if SB_SW_SECP256K1_SUPPORT
 SB_DEFINE_TEST(secp256k1_endomorphism);
+#endif
+#if SB_SW_P256_SUPPORT
 SB_DEFINE_TEST(exceptions);
+#endif
 SB_DEFINE_TEST(sw_h);
 SB_DEFINE_TEST(sw_point_mult_add);
 // Known answer tests for keygen, shared_secret, and sign/verify work as they
 // should.
+#if SB_SW_P256_SUPPORT
 SB_DEFINE_TEST(hkdf_expand_private_p256);
+#endif
+#if SB_SW_SECP256K1_SUPPORT
 SB_DEFINE_TEST(hkdf_expand_private_secp256k1);
+#endif
+#if SB_SW_P256_SUPPORT
 SB_DEFINE_TEST(compute_public);
 SB_DEFINE_TEST(valid_private);
 SB_DEFINE_TEST(valid_public);
 SB_DEFINE_TEST(shared_secret);
 SB_DEFINE_TEST(shared_secret_cavp_1);
+#endif
+#if SB_SW_SECP256K1_SUPPORT
 SB_DEFINE_TEST(shared_secret_secp256k1);
+#endif
+#if SB_SW_P256_SUPPORT
 SB_DEFINE_TEST(sign_rfc6979);
+#endif
+#if !SB_USE_RP2350_SHA256
 SB_DEFINE_TEST(sign_rfc6979_sha256);
+#endif
+#if SB_SW_SECP256K1_SUPPORT
 SB_DEFINE_TEST(sign_secp256k1);
+#endif
+#if SB_SW_P256_SUPPORT
 SB_DEFINE_TEST(sign_catastrophe);
 SB_DEFINE_TEST(verify);
 SB_DEFINE_TEST(verify_james);
 SB_DEFINE_TEST(verify_invalid);
+#endif
 // Use pk recovery to test the possibility of a small r signature not verifying
 // correctly the first time.
+#if SB_SW_P256_SUPPORT
 SB_DEFINE_TEST(small_r_signature_p256);
+#endif
+#if SB_SW_SECP256K1_SUPPORT
 SB_DEFINE_TEST(small_r_signature_secp256k1);
+#endif
+#if SB_SW_P256_SUPPORT
 SB_DEFINE_TEST(small_r_boundary_p256);
+#endif
+#if SB_SW_SECP256K1_SUPPORT
 SB_DEFINE_TEST(small_r_boundary_secp256k1);
+#endif
+#if SB_SW_P256_SUPPORT
 SB_DEFINE_TEST(pk_recovery);
 SB_DEFINE_TEST(pk_recovery_james);
+#endif
 // Tests to ensure that all values are checked for validity before moving on to
 // computation.
+#if SB_SW_P256_SUPPORT
 SB_DEFINE_TEST(candidates);
+#endif
 SB_DEFINE_TEST(sw_early_errors);
 SB_DEFINE_TEST(sw_invalid_scalar);
+#if SB_SW_P256_SUPPORT
 SB_DEFINE_TEST(sw_invalid_sig_p256);
+#endif
+#if SB_SW_SECP256K1_SUPPORT
 SB_DEFINE_TEST(sw_invalid_sig_secp256k1);
+#endif
 // Randomized tests for expected functionality.
 // Each takes a drbg and at each iteration generates a keypair to run tests.
+#if SB_SW_P256_SUPPORT
 SB_DEFINE_TEST(composite_key_wrap_p256);
+#endif
+#if SB_SW_SECP256K1_SUPPORT
 SB_DEFINE_TEST(composite_key_wrap_secp256k1);
+#endif
 SB_DEFINE_TEST(sw_point_mult_add_rand);
+#if SB_SW_P256_SUPPORT
 SB_DEFINE_TEST(invert_iter);
+#endif
+#if SB_SW_SECP256K1_SUPPORT
 SB_DEFINE_TEST(invert_iter_secp256k1);
+#endif
+#if SB_SW_P256_SUPPORT
 SB_DEFINE_TEST(decompress_iter);
+#endif
+#if SB_SW_SECP256K1_SUPPORT
 SB_DEFINE_TEST(decompress_iter_secp256k1);
+#endif
+#if SB_SW_P256_SUPPORT
 SB_DEFINE_TEST(decompress_rand);
+#endif
+#if SB_SW_SECP256K1_SUPPORT
 SB_DEFINE_TEST(decompress_rand_secp256k1);
+#endif
+#if SB_SW_P256_SUPPORT
 SB_DEFINE_TEST(shared_iter);
+#endif
+#if SB_SW_SECP256K1_SUPPORT
 SB_DEFINE_TEST(shared_iter_secp256k1);
+#endif
+#if SB_SW_P256_SUPPORT
 SB_DEFINE_TEST(sign_iter);
+#endif
+#if SB_SW_SECP256K1_SUPPORT
 SB_DEFINE_TEST(sign_iter_secp256k1);
+#endif
 
 #ifndef SB_TEST_TIS
 

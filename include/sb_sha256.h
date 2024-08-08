@@ -46,6 +46,10 @@
 #include <stdint.h>
 #include <sb_types.h>
 
+//#if !defined(SB_USE_RP2350_SHA256) && PICO_RP2350
+//#define SB_USE_RP2350_SHA256 1
+//#endif
+
 /** @private
   * @typedef sb_sha256_word_t
   * @brief Word size that SHA256 operates on */
@@ -71,11 +75,13 @@ typedef struct sb_sha256_ihash_t {
  *  @brief Opaque state structure. You are responsible for allocating this
  *  and passing it in to SHA256 operations. */
 typedef struct sb_sha256_state_t {
+#if !SB_USE_RP2350_SHA256
     /** @privatesection */
     sb_sha256_ihash_t ihash; ///< Intermediate hash state
     sb_sha256_ihash_t a_h; ///< a through h, the working variables
     sb_sha256_word_t W[16]; ///< message schedule rotating window
     sb_byte_t buffer[SB_SHA256_BLOCK_SIZE]; ///< Block-sized buffer of input
+#endif
     sb_size_t total_bytes; ///< Total number of bytes processed
 } sb_sha256_state_t; /**< Convenience typedef */
 
@@ -104,6 +110,10 @@ extern void sb_sha256_update(sb_sha256_state_t sha[static restrict 1],
                              const sb_byte_t* restrict input,
                              size_t len);
 
+// As above, but 32-bit buffer. len is still in bytes.
+void sb_sha256_update_32(sb_sha256_state_t sha[static restrict 1],
+                             const uint32_t* restrict input,
+                             size_t len);
 /**
  * Calculate the SHA256 hash of the bytes that have been previously provided
  * in calls to ::sb_sha256_update. Invalidates the SHA256 state.
@@ -135,4 +145,5 @@ extern void sb_sha256_message(sb_sha256_state_t sha[static restrict 1],
                               const sb_byte_t* restrict input,
                               size_t len);
 
+extern void s_varm_sha256_put_word_inc(uint32_t word, sb_sha256_state_t sha[static restrict 1]);
 #endif

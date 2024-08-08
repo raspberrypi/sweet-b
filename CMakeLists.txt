@@ -40,7 +40,7 @@
 cmake_minimum_required(VERSION 3.5)
 
 project(sweet_b LANGUAGES C ASM VERSION 0.1.0)
-include(GNUInstallDirs)
+#include(GNUInstallDirs)
 
 set(CMAKE_C_STANDARD 11)
 
@@ -50,32 +50,45 @@ if("${CMAKE_C_COMPILER_ID}" STREQUAL "Clang" OR
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Weverything -Wno-padded -Wno-c++98-compat -Wno-documentation-unknown-command")
     set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -fsanitize=undefined -fsanitize=address")
 endif()
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_POSIX_C_SOURCE=200112L -Wall -pedantic -Wextra")
-set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -Werror")
+#set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_POSIX_C_SOURCE=200112L -Wall -pedantic -Wextra")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_POSIX_C_SOURCE=200112L -Wall -Wextra")
+#set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -Werror")
 
 include_directories(include)
 
 set(SB_PUBLIC_HEADERS
-        include/sb_sw_lib.h
-        include/sb_hmac_drbg.h
-        include/sb_hmac_sha256.h
-        include/sb_hkdf.h
-        include/sb_sha256.h
-        include/sb_sw_context.h
-        include/sb_types.h
-        include/sb_all.h)
+        ${CMAKE_CURRENT_LIST_DIR}/include/sb_sw_lib.h
+        ${CMAKE_CURRENT_LIST_DIR}/include/sb_hmac_drbg.h
+        ${CMAKE_CURRENT_LIST_DIR}/include/sb_hmac_sha256.h
+        ${CMAKE_CURRENT_LIST_DIR}/include/sb_hkdf.h
+        ${CMAKE_CURRENT_LIST_DIR}/include/sb_sha256.h
+        ${CMAKE_CURRENT_LIST_DIR}/include/sb_sw_context.h
+        ${CMAKE_CURRENT_LIST_DIR}/include/sb_types.h
+        ${CMAKE_CURRENT_LIST_DIR}/include/sb_all.h)
 
 set(SB_PRIVATE_HEADERS
-        src/sb_error.h
-        src/sb_fe.h
-        src/sb_fe_tests.c.h
-        src/sb_sw_curves.h
-        src/sb_sw_lib_tests.c.h
-        src/sb_test.h
-        src/sb_test_cavp.h
-        src/sb_test_list.h)
+        ${CMAKE_CURRENT_LIST_DIR}/src/sb_error.h
+        ${CMAKE_CURRENT_LIST_DIR}/src/sb_fe.h
+        ${CMAKE_CURRENT_LIST_DIR}/src/sb_fe_tests.c.h
+        ${CMAKE_CURRENT_LIST_DIR}/src/sb_sw_curves.h
+        ${CMAKE_CURRENT_LIST_DIR}/src/sb_sw_lib_tests.c.h
+        ${CMAKE_CURRENT_LIST_DIR}/src/sb_test.h
+        ${CMAKE_CURRENT_LIST_DIR}/src/sb_test_cavp.h
+        ${CMAKE_CURRENT_LIST_DIR}/src/sb_test_list.h)
 
 set(SB_ASM_SOURCES)
+
+message("PICO_PLATFORM ${PICO_PLATFORM} PICO_RP2350 ${PICO_RP2350}")
+if (PICO_PLATFORM)
+    SET(SWEET_B_INTERFACE_LIB 1)
+endif()
+if (PICO_RP2350)
+    set(SB_ASM_SOURCES ${CMAKE_CURRENT_LIST_DIR}/src/sb_fe_armv7.S)
+    set(SB_FE_ASM "1" CACHE STRING "")
+    set(SB_TEST_VERIFY_QR 0)
+    set(SB_UNROLL 0)
+    set(SB_TEST_WORD_SIZE 4)
+endif()
 
 if(NOT DEFINED SB_FE_ASM)
     set(SB_FE_ASM "0" CACHE STRING "")
@@ -86,16 +99,16 @@ set(SB_SOURCES
         ${SB_PRIVATE_HEADERS}
         ${SB_ASM_SOURCES}
 
-        src/sb_sha256.c
-        src/sb_hmac_sha256.c
-        src/sb_hmac_drbg.c
-        src/sb_hkdf.c
+        ${CMAKE_CURRENT_LIST_DIR}/src/sb_sha256.c
+        ${CMAKE_CURRENT_LIST_DIR}/src/sb_hmac_sha256.c
+        ${CMAKE_CURRENT_LIST_DIR}/src/sb_hmac_drbg.c
+        ${CMAKE_CURRENT_LIST_DIR}/src/sb_hkdf.c
 
-        src/sb_fe.c
-        src/sb_sw_lib.c)
+        ${CMAKE_CURRENT_LIST_DIR}/src/sb_fe.c
+        ${CMAKE_CURRENT_LIST_DIR}/src/sb_sw_lib.c)
 
 if(NOT DEFINED SB_TEST)
-    option(SB_TEST "" ON)
+    option(SB_TEST "" OFF)
 endif()
 
 if(SB_TEST)
@@ -103,6 +116,16 @@ if(SB_TEST)
             "${CMAKE_CURRENT_SOURCE_DIR}/src/sb_test_list.h")
 
     add_executable(sb_test ${SB_SOURCES} src/sb_test.c src/sb_test_cavp.c)
+    target_include_directories(sb_test PRIVATE ${CMAKE_CURRENT_LIST_DIR}/include)
+    if (PICO_PLATFORM)
+        target_compile_definitions(sb_test PRIVATE
+                FEATURE_CANARIES=1
+                BOOTROM_HARDENING=1
+        )
+
+        target_link_libraries(sb_test pico_stdlib)
+        pico_add_extra_outputs(sb_test)
+    endif()
 
     # 16x16->32 operations are most likely to accidentally trigger UB if there is
     # a missing cast from implicitly promoted int to uint32_t
@@ -118,18 +141,36 @@ if(SB_TEST)
         set(SB_TEST_VERIFY_QR "1" CACHE STRING "")
     endif()
 
+    if(NOT DEFINED SB_TEST_FEATURE_CANARIES)
+        set(SB_TEST_FEATURE_CANARIES 0)
+    endif()
+    if(SB_TEST_FEATURE_CANARIES)
+        target_include_directories(sb_test PRIVATE
+                ${CMAKE_CURRENT_LIST_DIR}/../../src/main/native
+                ${CMAKE_CURRENT_LIST_DIR}/../../src/common
+                ${CMAKE_CURRENT_LIST_DIR}/../../test
+        )
+    endif()
+
     target_compile_definitions(sb_test PRIVATE
             SB_TEST
             SB_WORD_SIZE=${SB_TEST_WORD_SIZE}
+            FEATURE_CANARIES=${SB_TEST_FEATURE_CANARIES}
             SB_FE_VERIFY_QR=${SB_TEST_VERIFY_QR}
             SB_FE_ASM=${SB_FE_ASM}
             SB_DEBUG_ASSERTS
-            SB_UNROLL=3
+            SB_UNROLL=0
             SB_HMAC_DRBG_RESEED_INTERVAL=18
             SB_HMAC_DRBG_MAX_BYTES_PER_REQUEST=128
             SB_HMAC_DRBG_MAX_ENTROPY_INPUT_LENGTH=256)
 
-    enable_testing()
+    if (PICO_RP2350)
+        target_compile_definitions(sb_test PRIVATE
+                SB_USE_RP2350_SHA256=1
+                PICO_TIME_DEFAULT_ALARM_POOL_DISABLED=1 #unicorn friendly
+        )
+    endif()
+enable_testing()
 
     add_test(NAME sb_test
             CONFIGURATIONS Debug
@@ -141,21 +182,33 @@ if(NOT DEFINED BUILD_SHARED_LIBS)
     option(BUILD_SHARED_LIBS "" ON)
 endif()
 
-add_library(sweet_b ${SB_SOURCES})
 
 if(NOT DEFINED SB_LIBRARY_DEFINES)
     set(SB_LIBRARY_DEFINES "" CACHE STRING "")
 endif()
 
-target_compile_definitions(sweet_b PRIVATE
-        ${SB_LIBRARY_DEFINES}
-        SB_FE_ASM=${SB_FE_ASM})
+if (NOT SWEET_B_INTERFACE_LIB)
+    add_library(sweet_b ${SB_SOURCES})
+    target_compile_definitions(sweet_b PRIVATE
+            ${SB_LIBRARY_DEFINES}
+            SB_FE_ASM=${SB_FE_ASM})
+else()
+    add_library(sweet_b INTERFACE)
+    target_include_directories(sweet_b INTERFACE ${CMAKE_CURRENT_LIST_DIR}/include)
+    target_sources(sweet_b INTERFACE ${SB_SOURCES})
+    target_compile_definitions(sweet_b INTERFACE
+            ${SB_LIBRARY_DEFINES}
+            SB_FE_ASM=${SB_FE_ASM}
+            SB_HMAC_DRBG_RESEED_INTERVAL=18
+            SB_HMAC_DRBG_MAX_BYTES_PER_REQUEST=128
+            SB_HMAC_DRBG_MAX_ENTROPY_INPUT_LENGTH=256)
+endif()
 
 target_include_directories(sweet_b INTERFACE
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 
 set_target_properties(sweet_b PROPERTIES
-        VERSION ${PROJECT_VERSION}
+#        VERSION ${PROJECT_VERSION}
         PUBLIC_HEADER "${SB_PUBLIC_HEADERS}")
 
 install(TARGETS sweet_b

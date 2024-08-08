@@ -44,6 +44,16 @@
 #include "sb_error.h" // for SB_NULLIFY
 #include <string.h>
 
+#if SB_USE_RP2350_SHA256
+#include "hardware/structs/sha256.h"
+#if SB_TEST
+#define sha256_hw_inst (*sha256_hw)
+#else
+extern sha256_hw_t sha256_hw_inst;
+#endif
+#endif
+
+#if !SB_USE_RP2350_SHA256
 #define SB_SHA256_ROUNDS 64
 #define SB_SHA256_WORD_BITS 32
 #define SB_SHA256_WORD_SHIFT 2
@@ -225,6 +235,13 @@ void sb_sha256_update(sb_sha256_state_t sha[static const restrict 1],
     }
 }
 
+// As above, but take a word buffer. Len is still in bytes.
+void sb_sha256_update_32(sb_sha256_state_t sha[static restrict 1],
+                             const uint32_t* restrict input,
+                             size_t len) {
+    sb_sha256_update(sha, (const sb_byte_t* restrict)input, len);
+}
+
 static const sb_byte_t sb_sha256_final_bit = 0x80;
 
 // This puts the final hash in ihash, but does not set output.
@@ -281,6 +298,78 @@ void sb_sha256_finish(sb_sha256_state_t sha[static const restrict 1],
     SB_NULLIFY(sha);
 }
 
+#else // RP2350
+#if !SB_FE_ASM
+#if FFEATURE_CANARIES
+#error needs canaries
+#endif
+// not called inline as asm code isn't inline
+static void s_sha256_put_word(uint32_t x) {
+    while (!(sha256_hw_inst.csr & SHA256_CSR_WDATA_RDY_BITS))
+        ;
+    sha256_hw_inst.wdata = x;
+}
+
+// not called inline as asm code isn't inline
+static void s_sha256_put_byte(uint8_t x) {
+    while (!(sha256_hw_inst.csr & SHA256_CSR_WDATA_RDY_BITS))
+        ;
+    *(io_rw_8*)&sha256_hw_inst.wdata = x;
+}
+#else
+extern void s_sha256_put_word(uint32_t x);
+extern void s_sha256_put_byte(uint8_t x);
+#endif
+#if !SB_FE_ASM
+#if FFEATURE_CANARIES
+#error needs canaries
+#endif
+void sb_sha256_init(sb_sha256_state_t sha[static const 1]) {
+    hw_set_bits(&sha256_hw_inst.csr, SHA256_CSR_BSWAP_BITS | SHA256_CSR_START_BITS);
+    sha->total_bytes = 0;
+}
+
+void sb_sha256_update(sb_sha256_state_t sha[static restrict 1],
+                             const sb_byte_t* restrict input,
+                             size_t len) {
+    for (uint i = 0; i < len; i++) {
+        s_sha256_put_byte(input[i]);
+    }
+    sha->total_bytes += len;
+}
+
+
+// Note len is still measured in bytes
+void sb_sha256_update_32(sb_sha256_state_t sha[static restrict 1],
+                             const uint32_t* restrict input,
+                             size_t len) {
+    for (uint i = 0; i < len / 4; i++) {
+        s_sha256_put_word(input[i]);
+    }
+    sha->total_bytes += len;
+}
+
+void sb_sha256_finish(sb_sha256_state_t sha[static restrict 1],  sb_byte_t output[static restrict SB_SHA256_SIZE]) {
+    // Terminate with 0x80 byte
+    s_sha256_put_byte(0x80u);
+    // Pad until there is exactly enough space for a 64-bit length
+    uint padded_len = sha->total_bytes + 1;
+    while (padded_len % 64 != 56) {
+        s_sha256_put_byte(0);
+        padded_len += 1;
+    }
+    // Write length (in bits!) as ule64
+    s_sha256_put_word(__builtin_bswap32(sha->total_bytes >> 29));
+    s_sha256_put_word(__builtin_bswap32(sha->total_bytes << 3));
+    // Get the final checksum
+    while (!(sha256_hw_inst.csr & SHA256_CSR_SUM_VLD_BITS));
+    for (int i = 0; i < 8; ++i) {
+        // note this code is running natively on ARM, so it wouldn't actually matter if it was unaligned
+        ((uint32_t*)__builtin_assume_aligned(output,4))[i] = __builtin_bswap32(sha256_hw_inst.sum[i]);
+    }
+}
+#endif
+#endif
 void sb_sha256_message(sb_sha256_state_t sha[static const restrict 1],
                        sb_byte_t output[static const restrict SB_SHA256_SIZE],
                        const sb_byte_t* const restrict input,
