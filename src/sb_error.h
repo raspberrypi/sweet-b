@@ -52,7 +52,7 @@
 } while (0)
 #else
 #include "bootrom.h"
-#define SB_NULLIFY(ptr) ({ bootrom_assert(SWEETB, !((sizeof(*(ptr)))&3)); s_native_crit_step_safe_mem_erase_by_words_const_size((uintptr_t)(ptr), sizeof(*(ptr)), true); })
+#define SB_NULLIFY(ptr) ({ bootrom_assert(SWEETB, !((sizeof(*(ptr)))&3)); call_s_native_crit_step_safe_mem_erase_by_words_const_size((uintptr_t)(ptr), sizeof(*(ptr)), true); })
 #endif
 
 

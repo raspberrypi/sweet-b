@@ -996,7 +996,9 @@ _sb_sha256_update_32_loop:
 
 _sb_sha256_update_32_done:
 #if FEATURE_CANARIES
+    movs    r1, #0
 .cpu cortex-m33
+    rcp_iequal r1, r2
     rcp_count_check_nodelay STEPTAG_S_SHA256_UPDATE_32
 .cpu cortex-m23
 #endif
