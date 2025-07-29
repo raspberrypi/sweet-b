@@ -1001,11 +1001,29 @@ static _Bool sb_sw_point_mult_is_finished(sb_sw_context_t m[static const 1])
 #if 1 || !SB_FE_ASM
 // sb_sw_point_mult_add_z_update computes the new Z and then performs co-Z
 // point addition at a cost of 7MM + 7A
-static void __attribute__((noipa)) sb_sw_point_mult_add_z_update(sb_sw_context_t q[static const 1],
+static void __attribute__((noipa))
+#if SB_FE_ASM
+__attribute__((naked))
+#endif
+sb_sw_point_mult_add_z_update(sb_sw_context_t q[static const 1],
                                           const sb_sw_curve_t s[static const 1])
 {
+#if SB_FE_ASM
+    // note space-saving by using ((naked)) and then doing the stack push/pop manually
+    // as GCC insists on using an "add sp, #12" and a 32 bit "pop pc". We push
+    // 4 regs, as GCC wants to use [sp, #4] for the canary.
 #if FEATURE_CANARIES
-    canary_entry(SB_SW_POINT_MULT_ADD_Z_UPDATE);
+    canary_entry_reg(r3, SB_SW_POINT_MULT_ADD_Z_UPDATE);
+    pico_default_asm_volatile(
+        "push {%0, lr}\n"
+        :
+        : "l" (__stack_canary_value)
+        );
+#else
+    pico_default_asm_volatile(
+        "push {r0, lr}"
+    );
+#endif
 #endif
     SB_FE_START(q,s)
     SB_FE_MOD_SUB  (O_C_T6, O_C_X2, O_C_X1, 0)    //  sb_fe_mod_sub  (C_T6(q), C_X2(q), C_X1(q), s->p);   // t6 = x2 - x1 = Z' / Z
@@ -1028,8 +1046,22 @@ static void __attribute__((noipa)) sb_sw_point_mult_add_z_update(sb_sw_context_t
     SB_FE_MOD_SUB    (O_C_Y1, O_C_Y1, O_C_Y2, 0)  //  sb_fe_mod_sub(C_Y1(c), C_Y1(c), C_Y2(c), s->p);   // y3 = (y2 - y1) * (B - x3) - E
     SB_FE_STOP
 
+#if SB_FE_ASM
 #if FEATURE_CANARIES
-    canary_exit_void(SB_SW_POINT_MULT_ADD_Z_UPDATE);
+    register uint32_t r3 asm ("r3");
+    pico_default_asm_volatile(
+        "pop {%0}\n"
+        : "=l" (r3)
+    );
+    rcp_canary_check_nodelay(TAG_CR(SB_SW_POINT_MULT_ADD_Z_UPDATE), r3);
+    pico_default_asm_volatile(
+        "pop {pc}\n"
+    );
+#else
+    pico_default_asm_volatile(
+        "pop {r0, pc}\n"
+    );
+#endif
 #endif
 }
 #else
@@ -3305,7 +3337,7 @@ sb_verify_result_t sb_sw_verify_signature(sb_sw_context_t ctx[static const 1],
 
     v0 = SB_FE_HARD_NEQ(C_T7(ctx), C_X1(ctx));
     if (SB_FE_IS_FALSE(v0)) {
-        xor_pattern = SB_OPAQUE(xor_pattern) + 0x60;
+        xor_pattern = SB_OPAQUE(xor_pattern) + (v0.v >> 17) -1;
         SB_FE_ASSERT_FALSE(v0);
         goto done;                        // ver |= sb_fe_equal(C_T7(v), C_X1(v));
     }
@@ -3334,7 +3366,7 @@ sb_verify_result_t sb_sw_verify_signature(sb_sw_context_t ctx[static const 1],
     v1 = SB_FE_HARD_EQ(C_T7(ctx), C_X1(ctx));
     if(SB_FE_IS_TRUE(v0) && SB_FE_IS_TRUE(v1)) {
         SB_FE_ASSERT_AND_TRUE(v0, v1);
-        xor_pattern = SB_OPAQUE(xor_pattern) + 0x40;
+        xor_pattern = SB_OPAQUE(xor_pattern) + (v0.v >> 25) + (v1.v >> 25) - (0xa5/2 + 0xa5/2 - 0x40);
     done:
         xor_pattern -= 0x6ec;
         xor_pattern = xor_pattern | (xor_pattern << 16);
